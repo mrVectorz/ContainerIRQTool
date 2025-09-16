@@ -11,6 +11,7 @@ This tool helps identify and resolve IRQ affinity violations where interrupt req
 ### 🔍 **Analysis Capabilities**
 - **Container CPU Isolation Detection**: Automatically identifies CPUs isolated for containers with `irq-load-balancing.crio.io=disable` and `cpu-quota.crio.io=disable` annotations
 - **IRQ Violation Analysis**: Detects IRQs incorrectly assigned to isolated CPUs
+- **NUMA Alignment Analysis**: Validates PCI device NUMA alignment with isolated container CPUs
 - **Interrupt Rate Analysis**: Calculates interrupts per hour based on system uptime
 - **Color-coded Severity**: Visual indication of IRQ priority (Green/Yellow/Red)
 - **High-Performance Processing**: Optimized Python analyzer for large-scale IRQ analysis
@@ -26,6 +27,8 @@ This tool helps identify and resolve IRQ affinity violations where interrupt req
 - **Full Analysis**: Detailed analysis of all CPUs with violations (`--full-analysis`)
 - **JSON Output**: Machine-readable format for automation
 - **Color-coded Terminal**: ANSI color support for visual severity indication
+  - **IRQ Analysis**: Green/Yellow/Red based on interrupt rates
+  - **NUMA Analysis**: Green (aligned), Red (misaligned), Yellow (errors)
 
 ## Requirements
 
@@ -60,6 +63,7 @@ chmod +x irq_analyzer.py
 |--------|-------------|
 | `--local DIR` | Run against sosreport directory instead of live host |
 | `--check-violations` | Enable IRQ violation analysis (disabled by default) |
+| `--check-numa-alignment` | Enable NUMA alignment analysis for isolated containers |
 | `--full-analysis` | Show detailed analysis for all CPUs (default: limit to first 10) |
 | `--output-format FORMAT` | Output format: 'text' (default) or 'json' |
 | `-h, --help` | Show help message |
@@ -93,7 +97,19 @@ sudo ./ContainerIRQTool.sh --check-violations --full-analysis
 ./ContainerIRQTool.sh --local /path/to/sosreport
 ```
 
-#### 4. JSON Output for Automation
+#### 4. NUMA Alignment Analysis
+```bash
+# Check NUMA alignment for isolated containers
+./ContainerIRQTool.sh --local /path/to/sosreport --check-numa-alignment
+
+# Combined IRQ violation and NUMA alignment analysis
+./ContainerIRQTool.sh --local /path/to/sosreport --check-violations --check-numa-alignment
+
+# Full analysis with NUMA alignment in JSON format
+./ContainerIRQTool.sh --local /path/to/sosreport --check-numa-alignment --output-format json
+```
+
+#### 5. JSON Output for Automation
 ```bash
 # Generate JSON output for machine processing
 ./ContainerIRQTool.sh --local /path/to/sosreport --output-format json
@@ -181,6 +197,91 @@ CPU 2 (14 violations):
     IRQ 138: 9920179 interrupts (8778.0/hr)    # 🔴 Critical
     IRQ 0: 65 interrupts (0.1/hr)              # 🟡 Low impact
     IRQ 7: 0 interrupts (0.0/hr)               # 🟢 No impact
+```
+
+### NUMA Alignment Analysis
+
+The tool analyzes NUMA alignment between isolated container CPUs and their assigned PCI devices:
+
+#### ✅ **NUMA Aligned** - Optimal Performance
+- Container CPUs and PCI devices are on the same NUMA node
+- Optimal memory bandwidth and latency
+- No performance degradation due to cross-NUMA traffic
+
+#### ❌ **NUMA Misaligned** - Performance Impact
+- Container CPUs and PCI devices are on different NUMA nodes
+- Increased memory latency due to cross-NUMA memory access
+- **Significant performance degradation** - requires immediate attention
+
+#### ⚠️ **Validation Issues**
+- PCI devices not found in container network namespace
+- Unable to determine NUMA topology
+- Missing PCI device NUMA information
+
+#### 🔧 **NUMA Detection Methods**
+The tool uses multiple methods to detect NUMA topology in sosreports:
+
+1. **Primary Method**: `/sys/devices/system/node/nodeX/cpulist` files
+2. **Fallback Method**: Parse CPU-to-NUMA mapping from `/proc/cpuinfo` (physical id field)
+3. **PCI NUMA Detection**: Parse `sos_commands/pci/lspci_-nnvv` output for device NUMA nodes
+
+**Smart Range Formatting**: CPU lists are automatically formatted using intelligent range detection:
+- **Consecutive ranges**: `0-15` instead of `0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15`
+- **Interleaved patterns**: `0-206:2 (even)` for hyperthreading systems with interleaved cores
+- **Block patterns**: `0-51,104-155` for socket-based NUMA allocation
+- **Mixed patterns**: `0-15,32-47,64-79` for complex topologies
+
+**Common NUMA Patterns**:
+- **Interleaved (Hyperthreading)**: Even cores on Node 0, odd cores on Node 1
+- **Block (Socket-based)**: Consecutive core ranges assigned to each socket
+- **Mixed**: Complex arrangements based on specific hardware configurations
+
+This ensures NUMA analysis works even when standard sysfs files are missing from sosreports.
+
+### Sample NUMA Output
+
+```
+NUMA ALIGNMENT ANALYSIS
+============================================================
+
+Color-coded NUMA alignment status:
+  🟢 Green: NUMA Aligned (Optimal Performance)
+  🟡 Yellow: Analysis Errors
+  🔴 Red: NUMA Misaligned (Performance Impact)
+
+SUMMARY:
+  Total containers: 5
+  Isolated containers: 2
+  Containers with PCI devices: 2
+  NUMA aligned: 1
+  NUMA misaligned: 1
+  Containers with errors: 0
+
+NUMA TOPOLOGY:
+  Node 0: CPUs 0-206:2 (even)                 # Interleaved pattern (hyperthreading)
+  Node 1: CPUs 1-207:2 (odd)                  # Each CPU belongs to exactly one NUMA node
+
+DETAILED ANALYSIS:
+
+Container: dpdk-app (a1b2c3d4e5f6)
+  CPUs: 2-5,58-61
+  PCI Devices: 0000:89:00.5, 0000:89:01.4
+  ✓ NUMA Alignment: ALIGNED                    # 🟢 Green text
+  Container NUMA nodes: 0
+  ✓ PCI 0000:89:00.5: NUMA node 0             # 🟢 Green text
+  ✓ PCI 0000:89:01.4: NUMA node 0             # 🟢 Green text
+  Network namespace validation:
+    ✓ 0000:89:00.5: Found in netns            # 🟢 Green text
+    ✓ 0000:89:01.4: Found in netns            # 🟢 Green text
+
+Container: sriov-workload (b2c3d4e5f7a8)
+  CPUs: 30-33,86-89
+  PCI Devices: 0000:17:00.2
+  ✗ NUMA Alignment: MISALIGNED                # 🔴 Red text
+  Container NUMA nodes: 1
+  ✗ PCI 0000:17:00.2: NUMA node 0            # 🔴 Red text
+  Network namespace validation:
+    ✓ 0000:17:00.2: Found in netns            # 🟢 Green text
 ```
 
 ### Configuration Output
@@ -299,24 +400,28 @@ bash -x ./ContainerIRQTool.sh --check-violations --local /path/to/sosreport
 ```
 ContainerIRQTool/
 ├── ContainerIRQTool.sh    # Main bash script
-├── irq_analyzer.py                  # High-performance Python analyzer
-└── README.md                        # This documentation
+├── irq_analyzer.py        # High-performance IRQ violation analyzer
+├── numa_analyzer.py       # NUMA alignment analyzer for containers
+└── README.md              # This documentation
 ```
 
 ## Use Cases
 
 ### 1. **OpenShift/Kubernetes Performance Tuning**
 - Identify IRQ interference with isolated container workloads
+- Validate NUMA alignment for SR-IOV and DPDK workloads
 - Optimize CPU isolation for latency-sensitive applications
 - Validate IRQ configuration in production environments
 
 ### 2. **SOS Report Analysis**
 - Post-incident analysis of IRQ-related performance issues
 - Historical trending of IRQ violations
+- NUMA misalignment analysis for performance degradation
 - Capacity planning for CPU isolation requirements
 
 ### 3. **System Configuration Validation**
 - Verify IRQ affinity settings after system changes
+- Validate PCI device NUMA placement for containers
 - Automate IRQ configuration in deployment pipelines
 - Compliance checking for performance requirements
 

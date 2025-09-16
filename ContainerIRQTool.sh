@@ -4,6 +4,7 @@
 LOCAL_MODE=false
 BASE_DIR="."
 CHECK_VIOLATIONS=false
+CHECK_NUMA=false
 FULL_ANALYSIS=false
 OUTPUT_FORMAT="text"
 
@@ -23,6 +24,10 @@ while [[ $# -gt 0 ]]; do
       CHECK_VIOLATIONS=true
       shift
       ;;
+    --check-numa-alignment)
+      CHECK_NUMA=true
+      shift
+      ;;
     --full-analysis)
       FULL_ANALYSIS=true
       shift
@@ -37,12 +42,13 @@ while [[ $# -gt 0 ]]; do
       fi
       ;;
     -h|--help)
-      echo "Usage: $0 [--local /path/to/sosreport] [--check-violations] [--full-analysis] [--output-format FORMAT]"
-      echo "  --local DIR          Run against sosreport directory instead of live host"
-      echo "  --check-violations   Enable IRQ violation analysis (slower, disabled by default)"
-      echo "  --full-analysis      Show detailed analysis for all CPUs (default: limit to top 10 most offending)"
-      echo "  --output-format FORMAT  Output format: 'text' (default) or 'json'"
-      echo "  -h, --help           Show this help message"
+      echo "Usage: $0 [--local /path/to/sosreport] [--check-violations] [--check-numa-alignment] [--full-analysis] [--output-format FORMAT]"
+      echo "  --local DIR              Run against sosreport directory instead of live host"
+      echo "  --check-violations       Enable IRQ violation analysis (slower, disabled by default)"
+      echo "  --check-numa-alignment   Enable NUMA alignment analysis for isolated containers"
+      echo "  --full-analysis          Show detailed analysis for all CPUs (default: limit to top 10 most offending)"
+      echo "  --output-format FORMAT   Output format: 'text' (default) or 'json'"
+      echo "  -h, --help               Show this help message"
       exit 0
       ;;
     *)
@@ -687,6 +693,84 @@ check_irq_violations() {
     log "    and restarting irqbalance to redistribute existing IRQs"
 }
 
+# JSON version of NUMA alignment checking
+check_numa_alignment_json() {
+    local base_dir="$1"
+    
+    # Get script directory and NUMA analyzer
+    SCRIPT_DIR="$(dirname "$(readlink -f "$0")")"
+    NUMA_SCRIPT="$SCRIPT_DIR/numa_analyzer.py"
+    
+    if [[ ! -f "$NUMA_SCRIPT" ]]; then
+        echo "    \"error\": true,"
+        echo "    \"message\": \"NUMA analyzer not found: $NUMA_SCRIPT\""
+        return
+    fi
+    
+    # Prepare arguments for NUMA script
+    local numa_args=""
+    if [[ "$LOCAL_MODE" == "true" ]]; then
+        numa_args="--sosreport-dir $base_dir"
+    else
+        echo "    \"error\": true,"
+        echo "    \"message\": \"Live system NUMA analysis not yet implemented\""
+        return
+    fi
+    
+    # Run NUMA analyzer with JSON output
+    local analyzer_output
+    analyzer_output=$(python3 "$NUMA_SCRIPT" $numa_args --output-format json 2>/dev/null)
+    
+    if [[ $? -ne 0 || -z "$analyzer_output" ]]; then
+        echo "    \"error\": true,"
+        echo "    \"message\": \"NUMA analyzer failed to run\""
+        return
+    fi
+    
+    # Output the JSON data from the NUMA analyzer (removing the outer braces)
+    echo "    \"analysis_available\": true,"
+    echo "$analyzer_output" | sed '1d;$d' | sed 's/^/    /'
+}
+
+# Text version of NUMA alignment checking
+check_numa_alignment_text() {
+    local base_dir="$1"
+    
+    log ""
+    log "NUMA ALIGNMENT ANALYSIS:"
+    log "========================"
+    
+    # Get script directory and NUMA analyzer
+    SCRIPT_DIR="$(dirname "$(readlink -f "$0")")"
+    NUMA_SCRIPT="$SCRIPT_DIR/numa_analyzer.py"
+    
+    if [[ ! -f "$NUMA_SCRIPT" ]]; then
+        log "  ✗ ERROR: NUMA analyzer not found: $NUMA_SCRIPT"
+        return
+    fi
+    
+    # Prepare arguments for NUMA script
+    local numa_args=""
+    if [[ "$LOCAL_MODE" == "true" ]]; then
+        numa_args="--sosreport-dir $base_dir"
+    else
+        log "  ✗ ERROR: Live system NUMA analysis not yet implemented"
+        return
+    fi
+    
+    # Run NUMA analyzer with text output
+    local analyzer_output
+    analyzer_output=$(python3 "$NUMA_SCRIPT" $numa_args --output-format text 2>/dev/null)
+    
+    if [[ $? -ne 0 || -z "$analyzer_output" ]]; then
+        log "  ✗ ERROR: NUMA analyzer failed to run"
+        return
+    fi
+    
+    # Display the output
+    echo "$analyzer_output"
+}
+
 # JSON version of IRQ violation checking
 check_irq_violations_json() {
     local proc_base_dir="$1"
@@ -790,6 +874,19 @@ if [[ "$OUTPUT_FORMAT" == "json" ]]; then
     echo "    \"enabled\": false,"
     echo "    \"message\": \"Skipped (use --check-violations to enable)\""
   fi
+  echo "  },"
+  echo "  \"numa_alignment_analysis\": {"
+  if [[ "$CHECK_NUMA" == "true" ]]; then
+    echo "    \"enabled\": true,"
+    if [[ "$LOCAL_MODE" == "true" ]]; then
+      check_numa_alignment_json "$BASE_DIR"
+    else
+      check_numa_alignment_json ""
+    fi
+  else
+    echo "    \"enabled\": false,"
+    echo "    \"message\": \"Skipped (use --check-numa-alignment to enable)\""
+  fi
   echo "  }"
 else
   # Check for IRQ violations (works for both local and live modes)
@@ -804,6 +901,20 @@ else
     log "IRQ VIOLATION ANALYSIS:"
     log "======================"
     log "  Skipped (use --check-violations to enable)"
+  fi
+  
+  # Check for NUMA alignment (works for both local and live modes)
+  if [[ "$CHECK_NUMA" == "true" ]]; then
+    if [[ "$LOCAL_MODE" == "true" ]]; then
+      check_numa_alignment_text "$BASE_DIR"
+    else
+      check_numa_alignment_text ""
+    fi
+  else
+    log ""
+    log "NUMA ALIGNMENT ANALYSIS:"
+    log "========================"
+    log "  Skipped (use --check-numa-alignment to enable)"
   fi
 fi
 
