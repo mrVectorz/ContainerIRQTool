@@ -157,23 +157,24 @@ def get_uptime_seconds(base_dir):
         return None
 
 def parse_proc_interrupts(base_dir):
-    """Parse /proc/interrupts and return interrupt counts for each IRQ."""
+    """Parse /proc/interrupts and return interrupt counts and device info for each IRQ."""
     if base_dir:
         interrupts_file = os.path.join(base_dir, 'proc', 'interrupts')
     else:
         interrupts_file = '/proc/interrupts'
     
     if not os.path.isfile(interrupts_file):
-        return {}
+        return {}, {}
     
     irq_counts = {}
+    irq_devices = {}
     
     try:
         with open(interrupts_file, 'r') as f:
             lines = f.readlines()
         
         if not lines:
-            return {}
+            return {}, {}
         
         # First line contains CPU headers (CPU0, CPU1, etc.)
         cpu_count = len(lines[0].split()) - 1  # Subtract 1 for the first column
@@ -206,11 +207,53 @@ def parse_proc_interrupts(base_dir):
                     break
             
             irq_counts[irq_num] = total_interrupts
+            
+            # Extract device information from the remaining parts
+            # Format: [CPU columns] [chip] [flags] [device_name]
+            # We want the device name which is typically the last field
+            device_info = "unknown"
+            if len(parts) > cpu_count + 1:
+                # Get everything after the CPU counts
+                device_parts = parts[cpu_count + 1:]
+                if device_parts:
+                    # The device name is typically the last part
+                    device_name = device_parts[-1]
+                    
+                    # For some common patterns, provide more descriptive names
+                    if device_name == "timer":
+                        device_info = "timer"
+                    elif "i8042" in device_name:
+                        device_info = "keyboard/mouse"
+                    elif "rtc" in device_name:
+                        device_info = "real-time clock"
+                    elif "acpi" in device_name:
+                        device_info = "ACPI"
+                    elif "ehci_hcd" in device_name or "uhci_hcd" in device_name or "ohci_hcd" in device_name or "xhci_hcd" in device_name:
+                        device_info = "USB controller"
+                    elif "enp" in device_name or "eth" in device_name or "eno" in device_name:
+                        device_info = "ethernet NIC"
+                    elif "wlp" in device_name or "wlan" in device_name or "iwlwifi" in device_name:
+                        device_info = "wireless NIC"
+                    elif "nvme" in device_name:
+                        device_info = "NVMe storage"
+                    elif "ahci" in device_name or "ata" in device_name:
+                        device_info = "SATA controller"
+                    elif "snd" in device_name or "audio" in device_name or "hda" in device_name:
+                        device_info = "audio device"
+                    elif "usb" in device_name.lower():
+                        device_info = "USB device"
+                    elif "pci" in device_name.lower():
+                        device_info = "PCI device"
+                    else:
+                        # Use the device name as-is if no pattern matches
+                        device_info = device_name
+            
+            irq_devices[irq_num] = device_info
         
     except (OSError, ValueError):
         pass
     
-    return irq_counts
+    return irq_counts, irq_devices
 
 def calculate_interrupts_per_hour(interrupt_count, uptime_seconds):
     """Calculate interrupts per hour given interrupt count and uptime."""
@@ -302,7 +345,7 @@ def analyze_irq_violations(isolated_cpus, irq_base_dir, base_dir=None, max_worke
     # Get uptime and interrupt counts for rate analysis
     print("Reading uptime and interrupt counts...", file=sys.stderr)
     uptime_seconds = get_uptime_seconds(base_dir)
-    irq_interrupt_counts = parse_proc_interrupts(base_dir)
+    irq_interrupt_counts, irq_device_info = parse_proc_interrupts(base_dir)
     
     results = {}
     
@@ -322,13 +365,15 @@ def analyze_irq_violations(isolated_cpus, irq_base_dir, base_dir=None, max_worke
                 interrupt_count = irq_interrupt_counts.get(irq_num, 0)
                 interrupts_per_hour = calculate_interrupts_per_hour(interrupt_count, uptime_seconds)
                 color_code, color_name = get_irq_color_code(interrupt_count, interrupts_per_hour)
+                device_info = irq_device_info.get(irq_num, "unknown")
                 
                 violation_details.append({
                     'irq': irq_num,
                     'interrupt_count': interrupt_count,
                     'interrupts_per_hour': interrupts_per_hour,
                     'color_code': color_code,
-                    'color_name': color_name
+                    'color_name': color_name,
+                    'device_info': device_info
                 })
             
             results[cpu] = {
@@ -436,6 +481,7 @@ def main():
                 count = detail['interrupt_count']
                 rate = detail['interrupts_per_hour']
                 color_code = detail['color_code']
+                device_info = detail.get('device_info', 'unknown')
                 
                 if rate is not None:
                     rate_str = f"{rate:.1f}/hr"
@@ -443,7 +489,7 @@ def main():
                     rate_str = "N/A"
                 
                 colored_irq = format_colored_text(f"IRQ {irq}", color_code)
-                print(f"    {colored_irq}: {count} interrupts ({rate_str})")
+                print(f"    {colored_irq}: {count} interrupts ({rate_str}) - {device_info}")
             
             print()  # Blank line between CPUs
             
