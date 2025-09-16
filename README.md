@@ -39,10 +39,10 @@ This tool helps identify and resolve IRQ affinity violations where interrupt req
 ```bash
 # Clone or download the tool
 git clone <repository-url>
-cd irq_reset_workaround
+cd ContainerIRQTool
 
 # Make scripts executable
-chmod +x local_set_irq_exclude_mask.sh
+chmod +x ContainerIRQTool.sh
 chmod +x irq_analyzer.py
 ```
 
@@ -51,7 +51,7 @@ chmod +x irq_analyzer.py
 ### Basic Syntax
 
 ```bash
-./local_set_irq_exclude_mask.sh [OPTIONS]
+./ContainerIRQTool.sh [OPTIONS]
 ```
 
 ### Command Line Options
@@ -68,28 +68,28 @@ chmod +x irq_analyzer.py
 #### 1. Analyze Live System
 ```bash
 # Basic analysis (configuration only)
-sudo ./local_set_irq_exclude_mask.sh
+sudo ./ContainerIRQTool.sh
 
 # Full analysis with IRQ violations
-sudo ./local_set_irq_exclude_mask.sh --check-violations --full-analysis
+sudo ./ContainerIRQTool.sh --check-violations --full-analysis
 ```
 
 #### 2. Analyze SOS Report
 ```bash
 # Quick analysis (first 10 CPUs with violations)
-./local_set_irq_exclude_mask.sh --local /path/to/sosreport --check-violations
+./ContainerIRQTool.sh --local /path/to/sosreport --check-violations
 
 # Complete analysis (all CPUs with violations)
-./local_set_irq_exclude_mask.sh --local /path/to/sosreport --check-violations --full-analysis
+./ContainerIRQTool.sh --local /path/to/sosreport --check-violations --full-analysis
 
 # Save detailed report to file
-./local_set_irq_exclude_mask.sh --local /path/to/sosreport --check-violations --full-analysis > irq_report.txt
+./ContainerIRQTool.sh --local /path/to/sosreport --check-violations --full-analysis > irq_report.txt
 ```
 
 #### 3. Configuration Only (No Violation Analysis)
 ```bash
 # Generate IRQ masks without checking violations (faster)
-./local_set_irq_exclude_mask.sh --local /path/to/sosreport
+./ContainerIRQTool.sh --local /path/to/sosreport
 ```
 
 ## Output Interpretation
@@ -163,13 +163,13 @@ python3 irq_analyzer.py --help
 
 ```bash
 # Check if violations exist (exit code based)
-./local_set_irq_exclude_mask.sh --local /path/to/sosreport --check-violations > /dev/null
+./ContainerIRQTool.sh --local /path/to/sosreport --check-violations > /dev/null
 if [ $? -eq 0 ]; then
     echo "Analysis completed successfully"
 fi
 
 # Parse violations count programmatically
-violations=$(./local_set_irq_exclude_mask.sh --local /path/to/sosreport --check-violations | grep "Total violations found:" | awk '{print $4}')
+violations=$(./ContainerIRQTool.sh --local /path/to/sosreport --check-violations | grep "Total violations found:" | awk '{print $4}')
 echo "Found $violations total violations"
 ```
 
@@ -193,7 +193,7 @@ echo "Found $violations total violations"
 #### 1. Permission Denied
 ```bash
 # For live system analysis
-sudo ./local_set_irq_exclude_mask.sh --check-violations
+sudo ./ContainerIRQTool.sh --check-violations
 ```
 
 #### 2. Python Analyzer Not Found
@@ -212,20 +212,20 @@ echo -e "\033[92mGreen\033[0m \033[93mYellow\033[0m \033[91mRed\033[0m"
 #### 4. Large Output Truncated
 ```bash
 # Use --full-analysis flag for complete output
-./local_set_irq_exclude_mask.sh --check-violations --local /path/to/sosreport --full-analysis
+./ContainerIRQTool.sh --check-violations --local /path/to/sosreport --full-analysis
 ```
 
 ### Debug Mode
 ```bash
 # Enable verbose output
-bash -x ./local_set_irq_exclude_mask.sh --check-violations --local /path/to/sosreport
+bash -x ./ContainerIRQTool.sh --check-violations --local /path/to/sosreport
 ```
 
 ## File Structure
 
 ```
-irq_reset_workaround/
-├── local_set_irq_exclude_mask.sh    # Main bash script
+ContainerIRQTool/
+├── ContainerIRQTool.sh    # Main bash script
 ├── irq_analyzer.py                  # High-performance Python analyzer
 └── README.md                        # This documentation
 ```
