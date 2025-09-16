@@ -398,6 +398,8 @@ def main():
     parser.add_argument('--max-workers', type=int, help='Maximum number of worker threads')
     parser.add_argument('--output-format', choices=['json', 'summary'], default='summary',
                        help='Output format')
+    parser.add_argument('--limit-display', action='store_true',
+                       help='Limit display to top 10 IRQs per CPU for better readability')
     
     args = parser.parse_args()
     
@@ -455,14 +457,51 @@ def main():
         if metadata.get('uptime_hours'):
             print(f"UPTIME_HOURS={metadata['uptime_hours']:.2f}")
         
+        # Calculate severity scores and categorize IRQs
+        cpu_severity_scores = {}
+        total_critical_irqs = 0
+        total_warning_irqs = 0
+        total_zero_irqs = 0
+        
+        for cpu, data in violations_data.items():
+            total_interrupt_rate = 0
+            cpu_critical = 0
+            cpu_warning = 0
+            cpu_zero = 0
+            
+            for detail in data.get('violation_details', []):
+                rate = detail.get('interrupts_per_hour', 0) or 0
+                count = detail.get('interrupt_count', 0)
+                total_interrupt_rate += rate
+                
+                if count == 0:
+                    cpu_zero += 1
+                elif rate < 1000:
+                    cpu_warning += 1
+                else:
+                    cpu_critical += 1
+            
+            cpu_severity_scores[cpu] = total_interrupt_rate
+            total_critical_irqs += cpu_critical
+            total_warning_irqs += cpu_warning
+            total_zero_irqs += cpu_zero
+        
+        # Sort CPUs by severity (highest interrupt rate first)
+        sorted_cpus = sorted(violations_data.keys(), key=lambda x: cpu_severity_scores.get(x, 0), reverse=True)
+        
         print()  # Add a blank line before detailed output
         print("IRQ VIOLATION ANALYSIS (Color-coded by interrupt rate):")
         print("  🟢 Green: 0 interrupts")  
         print("  🟡 Yellow: < 1000 interrupts/hour")
         print("  🔴 Red: ≥ 1000 interrupts/hour")
         print()
+        print(f"SUMMARY: {len(violations_data)} CPUs with violations")
+        print(f"  🔴 Critical IRQs (≥1000/hr): {total_critical_irqs}")
+        print(f"  🟡 Warning IRQs (<1000/hr): {total_warning_irqs}")
+        print(f"  🟢 Zero interrupt IRQs: {total_zero_irqs}")
+        print()
         
-        for cpu in sorted(violations_data.keys()):
+        for cpu in sorted_cpus:
             data = violations_data[cpu]
             containers_str = ', '.join(data['containers']) if data['containers'] else '[none found]'
             
@@ -476,7 +515,15 @@ def main():
                                      key=lambda x: x.get('interrupts_per_hour', 0) or 0, 
                                      reverse=True)
             
-            for detail in sorted_violations:
+            # Limit to top 10 IRQs if limit_display is enabled
+            display_violations = sorted_violations
+            if args.limit_display and len(sorted_violations) > 10:
+                display_violations = sorted_violations[:10]
+                truncated_count = len(sorted_violations) - 10
+            else:
+                truncated_count = 0
+            
+            for detail in display_violations:
                 irq = detail['irq']
                 count = detail['interrupt_count']
                 rate = detail['interrupts_per_hour']
@@ -490,6 +537,10 @@ def main():
                 
                 colored_irq = format_colored_text(f"IRQ {irq}", color_code)
                 print(f"    {colored_irq}: {count} interrupts ({rate_str}) - {device_info}")
+            
+            # Show truncation message if IRQs were limited
+            if truncated_count > 0:
+                print(f"    ... and {truncated_count} more IRQs (use --limit-display=false for full list)")
             
             print()  # Blank line between CPUs
             

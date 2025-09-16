@@ -30,7 +30,7 @@ while [[ $# -gt 0 ]]; do
       echo "Usage: $0 [--local /path/to/sosreport] [--check-violations] [--full-analysis]"
       echo "  --local DIR          Run against sosreport directory instead of live host"
       echo "  --check-violations   Enable IRQ violation analysis (slower, disabled by default)"
-      echo "  --full-analysis      Show detailed analysis for all CPUs (default: limit to first 10)"
+      echo "  --full-analysis      Show detailed analysis for all CPUs (default: limit to top 10 most offending)"
       echo "  -h, --help           Show this help message"
       exit 0
       ;;
@@ -494,7 +494,11 @@ check_irq_violations() {
     
     # Run Python analyzer and capture results
     local analyzer_output
-    analyzer_output=$(python3 "$PYTHON_SCRIPT" $python_args --output-format summary)
+    local limit_flag=""
+    if [[ "$FULL_ANALYSIS" != "true" ]]; then
+        limit_flag="--limit-display"
+    fi
+    analyzer_output=$(python3 "$PYTHON_SCRIPT" $python_args --output-format summary $limit_flag)
     
     if [[ $? -ne 0 || -z "$analyzer_output" ]]; then
         log "  ✗ ERROR: Python analyzer failed to run"
@@ -536,8 +540,8 @@ check_irq_violations() {
         local cpu_count=$(echo "$detailed_section" | grep -c "^CPU [0-9]* (.*violations):")
         
         if [[ $cpu_count -gt 10 && "$FULL_ANALYSIS" != "true" ]]; then
-            # For many violations, show first 10 CPUs + summary (unless --full-analysis is used)
-            log "  Showing detailed analysis for first 10 CPUs (of $cpu_count total CPUs with violations):"
+            # For many violations, show top 10 most offending CPUs + summary (unless --full-analysis is used)
+            log "  Showing detailed analysis for top 10 most offending CPUs (of $cpu_count total CPUs with violations):"
             log ""
             
             # Extract just the first 10 CPUs from detailed section
@@ -564,7 +568,7 @@ check_irq_violations() {
             done <<< "$detailed_section"
             
             log ""
-            log "  ... (showing only first 10 of $cpu_count CPUs with violations)"
+            log "  ... (showing only top 10 most offending of $cpu_count CPUs with violations)"
             log "  Use --full-analysis flag to see all $cpu_count CPUs with violations"
         else
             # For manageable number of violations or when --full-analysis is used, show all
