@@ -61,6 +61,7 @@ chmod +x irq_analyzer.py
 | `--local DIR` | Run against sosreport directory instead of live host |
 | `--check-violations` | Enable IRQ violation analysis (disabled by default) |
 | `--full-analysis` | Show detailed analysis for all CPUs (default: limit to first 10) |
+| `--output-format FORMAT` | Output format: 'text' (default) or 'json' |
 | `-h, --help` | Show help message |
 
 ### Usage Examples
@@ -92,7 +93,63 @@ sudo ./ContainerIRQTool.sh --check-violations --full-analysis
 ./ContainerIRQTool.sh --local /path/to/sosreport
 ```
 
+#### 4. JSON Output for Automation
+```bash
+# Generate JSON output for machine processing
+./ContainerIRQTool.sh --local /path/to/sosreport --output-format json
+
+# JSON output with full IRQ violation analysis
+./ContainerIRQTool.sh --local /path/to/sosreport --check-violations --output-format json
+
+# Pipe JSON to jq for specific data extraction
+./ContainerIRQTool.sh --local /path/to/sosreport --output-format json | jq '.container_analysis.isolated_cpus_formatted'
+
+# Extract violation count for monitoring
+./ContainerIRQTool.sh --local /path/to/sosreport --check-violations --output-format json | jq '.irq_violation_analysis.total_violations'
+```
+
 ## Output Interpretation
+
+### JSON Output Format
+
+The tool can output structured JSON data for machine processing and automation. The JSON structure includes:
+
+```json
+{
+  "analysis_type": "IRQ Affinity Configuration Analysis",
+  "mode": "sosreport|live",
+  "container_analysis": {
+    "isolated_cpus_found": true|false,
+    "isolated_cpus_formatted": "human-readable CPU ranges",
+    "isolated_cpus_raw": "comma-separated CPU list"
+  },
+  "computed_irq_configuration": {
+    "host_cpu_count": 208,
+    "allowed_irq_cpus": { "kernel_mask": "...", "irqbalance_mask": "...", "cpus_formatted": "...", "cpus_raw": "..." },
+    "banned_irq_cpus": { "kernel_mask": "...", "irqbalance_mask": "...", "cpus_formatted": "...", "cpus_raw": "..." }
+  },
+  "irq_violation_analysis": {
+    "enabled": true|false,
+    "violations_possible": true|false,
+    "isolated_cpus": [...],
+    "violations": { /* detailed violation data when enabled */ },
+    "total_violations": 42,
+    "total_irqs_scanned": 1500
+  },
+  "current_system_state": {
+    "source": "sosreport|live_system",
+    "default_smp_affinity": { "file_found": true|false, "current_mask": "..." },
+    "irqbalance_config": { "file_found": true|false, "banned_cpus_set": true|false, "current_mask": "..." }
+  },
+  "recommendations": {
+    "default_smp_affinity": { "action_required": true|false, "action": "UPDATE|CREATE|NONE", "current": "...", "required": "..." },
+    "irqbalance_config": { "action_required": true|false, "action": "UPDATE|CREATE|ADD|NONE", "current": "...", "required": "..." }
+  },
+  "changes_applied": { /* only in live mode - details of actual changes made */ },
+  "mode": "analysis_only|live_system",
+  "changes_made": true|false
+}
+```
 
 ### IRQ Violation Analysis
 
@@ -168,9 +225,25 @@ if [ $? -eq 0 ]; then
     echo "Analysis completed successfully"
 fi
 
-# Parse violations count programmatically
+# Parse violations count programmatically (text output)
 violations=$(./ContainerIRQTool.sh --local /path/to/sosreport --check-violations | grep "Total violations found:" | awk '{print $4}')
 echo "Found $violations total violations"
+
+# Using JSON output for easier parsing
+violations=$(./ContainerIRQTool.sh --local /path/to/sosreport --check-violations --output-format json | jq -r '.irq_violation_analysis.total_violations // 0')
+echo "Found $violations total violations"
+
+# Check if any action is required
+action_required=$(./ContainerIRQTool.sh --local /path/to/sosreport --output-format json | jq -r '.recommendations | to_entries[] | select(.value.action_required == true) | .key')
+if [ -n "$action_required" ]; then
+    echo "Action required for: $action_required"
+else
+    echo "No configuration changes needed"
+fi
+
+# Extract isolated CPUs for monitoring dashboards
+isolated_cpus=$(./ContainerIRQTool.sh --local /path/to/sosreport --output-format json | jq -r '.container_analysis.isolated_cpus_formatted')
+echo "Isolated CPUs: $isolated_cpus"
 ```
 
 ## Performance Characteristics

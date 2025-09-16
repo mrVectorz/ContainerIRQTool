@@ -5,6 +5,7 @@ LOCAL_MODE=false
 BASE_DIR="."
 CHECK_VIOLATIONS=false
 FULL_ANALYSIS=false
+OUTPUT_FORMAT="text"
 
 while [[ $# -gt 0 ]]; do
   case $1 in
@@ -26,11 +27,21 @@ while [[ $# -gt 0 ]]; do
       FULL_ANALYSIS=true
       shift
       ;;
+    --output-format)
+      if [[ -n $2 && ($2 == "text" || $2 == "json") ]]; then
+        OUTPUT_FORMAT="$2"
+        shift 2
+      else
+        echo "Error: --output-format requires 'text' or 'json' as argument"
+        exit 1
+      fi
+      ;;
     -h|--help)
-      echo "Usage: $0 [--local /path/to/sosreport] [--check-violations] [--full-analysis]"
+      echo "Usage: $0 [--local /path/to/sosreport] [--check-violations] [--full-analysis] [--output-format FORMAT]"
       echo "  --local DIR          Run against sosreport directory instead of live host"
       echo "  --check-violations   Enable IRQ violation analysis (slower, disabled by default)"
       echo "  --full-analysis      Show detailed analysis for all CPUs (default: limit to top 10 most offending)"
+      echo "  --output-format FORMAT  Output format: 'text' (default) or 'json'"
       echo "  -h, --help           Show this help message"
       exit 0
       ;;
@@ -176,17 +187,72 @@ log() {
   echo "$1"
 }
 
+# JSON output helper functions
+json_escape() {
+  local str="$1"
+  # Escape quotes and backslashes for JSON
+  str="${str//\\/\\\\}"
+  str="${str//\"/\\\"}"
+  echo "$str"
+}
+
+json_array() {
+  local arr=("$@")
+  local result="["
+  local first=true
+  for item in "${arr[@]}"; do
+    if [[ "$first" == "true" ]]; then
+      first=false
+    else
+      result="$result,"
+    fi
+    result="$result\"$(json_escape "$item")\""
+  done
+  result="$result]"
+  echo "$result"
+}
+
+json_output() {
+  local key="$1"
+  local value="$2"
+  local is_number="$3"
+  
+  if [[ "$is_number" == "true" ]]; then
+    echo "  \"$(json_escape "$key")\": $value"
+  else
+    echo "  \"$(json_escape "$key")\": \"$(json_escape "$value")\""
+  fi
+}
+
 FORMATTED_ISOLATED_CPUS=$(format_cpu_list "$ISOLATED_CPUS")
 
-log "========================================="
-log "IRQ Affinity Configuration Analysis"
-log "========================================="
-log ""
-log "CONTAINER ANALYSIS:"
-if [[ -n "$FORMATTED_ISOLATED_CPUS" ]]; then
-  log "  CPUs to isolate from IRQs: $FORMATTED_ISOLATED_CPUS"
+# Start JSON output or text output
+if [[ "$OUTPUT_FORMAT" == "json" ]]; then
+  echo "{"
+  echo "  \"analysis_type\": \"IRQ Affinity Configuration Analysis\","
+  echo "  \"mode\": \"$(if [[ "$LOCAL_MODE" == "true" ]]; then echo "sosreport"; else echo "live"; fi)\","
+  echo "  \"container_analysis\": {"
+  if [[ -n "$FORMATTED_ISOLATED_CPUS" ]]; then
+    echo "    \"isolated_cpus_found\": true,"
+    echo "    \"isolated_cpus_formatted\": \"$(json_escape "$FORMATTED_ISOLATED_CPUS")\","
+    echo "    \"isolated_cpus_raw\": \"$(json_escape "$ISOLATED_CPUS")\""
+  else
+    echo "    \"isolated_cpus_found\": false,"
+    echo "    \"isolated_cpus_formatted\": \"\","
+    echo "    \"isolated_cpus_raw\": \"\""
+  fi
+  echo "  },"
 else
-  log "  No CPUs found requiring IRQ isolation"
+  log "========================================="
+  log "IRQ Affinity Configuration Analysis"
+  log "========================================="
+  log ""
+  log "CONTAINER ANALYSIS:"
+  if [[ -n "$FORMATTED_ISOLATED_CPUS" ]]; then
+    log "  CPUs to isolate from IRQs: $FORMATTED_ISOLATED_CPUS"
+  else
+    log "  No CPUs found requiring IRQ isolation"
+  fi
 fi
 
 # Host CPU count
@@ -621,189 +687,516 @@ check_irq_violations() {
     log "    and restarting irqbalance to redistribute existing IRQs"
 }
 
-log ""
-log "COMPUTED IRQ CONFIGURATION:"
-log "  Allowed IRQ CPUs:"
-log "    Kernel mask (/proc/irq/default_smp_affinity): $kernel_allowed_mask"
-log "    irqbalance mask (IRQBALANCE_BANNED_CPUS uses banned): $irqbalance_allowed_mask"
-log "    CPUs: $formatted_allowed_cpus"
-log "  Banned IRQ CPUs:"
-log "    Kernel mask: $kernel_banned_mask"
-log "    irqbalance mask (IRQBALANCE_BANNED_CPUS): $irqbalance_banned_mask"
-log "    CPUs: $formatted_banned_cpus"
+# JSON version of IRQ violation checking
+check_irq_violations_json() {
+    local proc_base_dir="$1"
+    
+    if [[ -z "$formatted_banned_cpus" ]]; then
+        echo "    \"violations_possible\": false,"
+        echo "    \"message\": \"No CPUs are isolated - no violations possible\""
+        return
+    fi
+    
+    # Get script directory and Python analyzer
+    SCRIPT_DIR="$(dirname "$(readlink -f "$0")")"
+    PYTHON_SCRIPT="$SCRIPT_DIR/irq_analyzer.py"
+    
+    if [[ ! -f "$PYTHON_SCRIPT" ]]; then
+        echo "    \"error\": true,"
+        echo "    \"message\": \"Python analyzer not found: $PYTHON_SCRIPT\""
+        return
+    fi
+    
+    # Prepare arguments for Python script
+    local python_args=""
+    if [[ "$LOCAL_MODE" == "true" ]]; then
+        python_args="--sosreport-dir $proc_base_dir"
+    else
+        # Convert formatted banned CPUs back to simple comma-separated list for Python
+        local banned_cpus_simple=""
+        for ((i=0; i<NUM_CPUS; i++)); do
+            if [[ ${banned[i]} -eq 1 ]]; then
+                if [[ -n "$banned_cpus_simple" ]]; then
+                    banned_cpus_simple="$banned_cpus_simple,$i"
+                else
+                    banned_cpus_simple="$i"
+                fi
+            fi
+        done
+        python_args="--isolated-cpus $banned_cpus_simple"
+    fi
+    
+    # Run Python analyzer with JSON output
+    local analyzer_output
+    local limit_flag=""
+    if [[ "$FULL_ANALYSIS" != "true" ]]; then
+        limit_flag="--limit-display"
+    fi
+    analyzer_output=$(python3 "$PYTHON_SCRIPT" $python_args --output-format json $limit_flag 2>/dev/null)
+    
+    if [[ $? -ne 0 || -z "$analyzer_output" ]]; then
+        echo "    \"error\": true,"
+        echo "    \"message\": \"Python analyzer failed to run\""
+        return
+    fi
+    
+    # Output the JSON data from the Python analyzer (removing the outer braces)
+    echo "    \"violations_possible\": true,"
+    echo "$analyzer_output" | sed '1d;$d' | sed 's/^/    /'
+}
 
-# Check for IRQ violations (works for both local and live modes)
-if [[ "$CHECK_VIOLATIONS" == "true" ]]; then
-  if [[ "$LOCAL_MODE" == "true" ]]; then
-    check_irq_violations "$BASE_DIR"
-  else
-    check_irq_violations ""
-  fi
+# Output computed IRQ configuration
+if [[ "$OUTPUT_FORMAT" == "json" ]]; then
+  echo "  \"computed_irq_configuration\": {"
+  echo "    \"host_cpu_count\": $NUM_CPUS,"
+  echo "    \"allowed_irq_cpus\": {"
+  echo "      \"kernel_mask\": \"$(json_escape "$kernel_allowed_mask")\","
+  echo "      \"irqbalance_mask\": \"$(json_escape "$irqbalance_allowed_mask")\","
+  echo "      \"cpus_formatted\": \"$(json_escape "$formatted_allowed_cpus")\","
+  echo "      \"cpus_raw\": \"$(json_escape "$allowed_cpus")\""
+  echo "    },"
+  echo "    \"banned_irq_cpus\": {"
+  echo "      \"kernel_mask\": \"$(json_escape "$kernel_banned_mask")\","
+  echo "      \"irqbalance_mask\": \"$(json_escape "$irqbalance_banned_mask")\","
+  echo "      \"cpus_formatted\": \"$(json_escape "$formatted_banned_cpus")\","
+  echo "      \"cpus_raw\": \"$(json_escape "$banned_cpus")\""
+  echo "    }"
+  echo "  },"
 else
   log ""
-  log "IRQ VIOLATION ANALYSIS:"
-  log "======================"
-  log "  Skipped (use --check-violations to enable)"
+  log "COMPUTED IRQ CONFIGURATION:"
+  log "  Allowed IRQ CPUs:"
+  log "    Kernel mask (/proc/irq/default_smp_affinity): $kernel_allowed_mask"
+  log "    irqbalance mask (IRQBALANCE_BANNED_CPUS uses banned): $irqbalance_allowed_mask"
+  log "    CPUs: $formatted_allowed_cpus"
+  log "  Banned IRQ CPUs:"
+  log "    Kernel mask: $kernel_banned_mask"
+  log "    irqbalance mask (IRQBALANCE_BANNED_CPUS): $irqbalance_banned_mask"
+  log "    CPUs: $formatted_banned_cpus"
 fi
 
+# Handle IRQ violation analysis
+if [[ "$OUTPUT_FORMAT" == "json" ]]; then
+  echo "  \"irq_violation_analysis\": {"
+  if [[ "$CHECK_VIOLATIONS" == "true" ]]; then
+    echo "    \"enabled\": true,"
+    # We'll call a modified check_irq_violations function that returns JSON data
+    if [[ "$LOCAL_MODE" == "true" ]]; then
+      check_irq_violations_json "$BASE_DIR"
+    else
+      check_irq_violations_json ""
+    fi
+  else
+    echo "    \"enabled\": false,"
+    echo "    \"message\": \"Skipped (use --check-violations to enable)\""
+  fi
+  echo "  }"
+else
+  # Check for IRQ violations (works for both local and live modes)
+  if [[ "$CHECK_VIOLATIONS" == "true" ]]; then
+    if [[ "$LOCAL_MODE" == "true" ]]; then
+      check_irq_violations "$BASE_DIR"
+    else
+      check_irq_violations ""
+    fi
+  else
+    log ""
+    log "IRQ VIOLATION ANALYSIS:"
+    log "======================"
+    log "  Skipped (use --check-violations to enable)"
+  fi
+fi
+
+# Handle sosreport analysis mode
 if [[ "$LOCAL_MODE" == "true" ]]; then
-  log ""
-  log "CURRENT SYSTEM STATE (from sosreport):"
   
   # Check if sosreport contains current irq configuration for comparison
   SMP_FILE="$BASE_DIR/proc/irq/default_smp_affinity"
   if [[ -f "$SMP_FILE" ]]; then
     current_mask=$(cat "$SMP_FILE" | tr 'A-Z' 'a-z')
-    log "  /proc/irq/default_smp_affinity: $current_mask"
   else
-    log "  /proc/irq/default_smp_affinity: [FILE NOT FOUND]"
+    current_mask=""
   fi
 
   # Check irqbalance configuration if available in sosreport
   IRQBALANCE_CONF="$BASE_DIR/etc/sysconfig/irqbalance"
   if [[ -f "$IRQBALANCE_CONF" ]]; then
     existing_mask=$(grep '^IRQBALANCE_BANNED_CPUS=' "$IRQBALANCE_CONF" 2>/dev/null | cut -d= -f2 | tr -d '"' | tr 'A-Z' 'a-z')
-    if [[ -n "$existing_mask" ]]; then
-      log "  IRQBALANCE_BANNED_CPUS: $existing_mask"
-    else
-      log "  IRQBALANCE_BANNED_CPUS: [NOT SET]"
-    fi
   else
-    log "  /etc/sysconfig/irqbalance: [FILE NOT FOUND]"
+    existing_mask=""
   fi
   
-  log ""
-  log "RECOMMENDATIONS:"
-  
-  # Compare and recommend changes for default_smp_affinity
-  if [[ -f "$SMP_FILE" ]]; then
-    normalized_current=$(normalize_hex_mask "$current_mask")
-    normalized_allowed=$(normalize_hex_mask "${kernel_allowed_mask,,}")
-    if [[ "$normalized_current" != "$normalized_allowed" ]]; then
-      log "  ✗ UPDATE REQUIRED: /proc/irq/default_smp_affinity"
-      log "    Current:  $current_mask"
-      log "    Required: ${kernel_allowed_mask,,}"
+  if [[ "$OUTPUT_FORMAT" == "json" ]]; then
+    echo "  ,"
+    echo "  \"current_system_state\": {"
+    echo "    \"source\": \"sosreport\","
+    echo "    \"default_smp_affinity\": {"
+    if [[ -f "$SMP_FILE" ]]; then
+      echo "      \"file_found\": true,"
+      echo "      \"current_mask\": \"$(json_escape "$current_mask")\""
     else
-      log "  ✓ CORRECT: /proc/irq/default_smp_affinity is already properly configured"
+      echo "      \"file_found\": false,"
+      echo "      \"current_mask\": null"
     fi
-  else
-    log "  ✗ CREATE REQUIRED: /proc/irq/default_smp_affinity = ${kernel_allowed_mask,,}"
-  fi
-
-  # Compare and recommend changes for irqbalance
-  if [[ -f "$IRQBALANCE_CONF" ]]; then
-    if [[ -n "$existing_mask" ]]; then
-      if [[ "$existing_mask" != "${irqbalance_banned_mask,,}" ]]; then
-        log "  ✗ UPDATE REQUIRED: IRQBALANCE_BANNED_CPUS"
-        log "    Current:  $existing_mask"
-        log "    Required: ${irqbalance_banned_mask,,}"
+    echo "    },"
+    echo "    \"irqbalance_config\": {"
+    if [[ -f "$IRQBALANCE_CONF" ]]; then
+      echo "      \"file_found\": true,"
+      if [[ -n "$existing_mask" ]]; then
+        echo "      \"banned_cpus_set\": true,"
+        echo "      \"current_mask\": \"$(json_escape "$existing_mask")\""
       else
-        log "  ✓ CORRECT: IRQBALANCE_BANNED_CPUS is already properly configured"
+        echo "      \"banned_cpus_set\": false,"
+        echo "      \"current_mask\": null"
       fi
     else
-      log "  ✗ ADD REQUIRED: IRQBALANCE_BANNED_CPUS=\"${irqbalance_banned_mask,,}\""
+      echo "      \"file_found\": false,"
+      echo "      \"banned_cpus_set\": false,"
+      echo "      \"current_mask\": null"
     fi
+    echo "    }"
+    echo "  },"
+    echo "  \"recommendations\": {"
+    
+    # Compare and recommend changes for default_smp_affinity
+    if [[ -f "$SMP_FILE" ]]; then
+      normalized_current=$(normalize_hex_mask "$current_mask")
+      normalized_allowed=$(normalize_hex_mask "${kernel_allowed_mask,,}")
+      if [[ "$normalized_current" != "$normalized_allowed" ]]; then
+        echo "    \"default_smp_affinity\": {"
+        echo "      \"action_required\": true,"
+        echo "      \"action\": \"UPDATE\","
+        echo "      \"current\": \"$(json_escape "$current_mask")\","
+        echo "      \"required\": \"$(json_escape "${kernel_allowed_mask,,}")\""
+        echo "    },"
+      else
+        echo "    \"default_smp_affinity\": {"
+        echo "      \"action_required\": false,"
+        echo "      \"action\": \"NONE\","
+        echo "      \"status\": \"CORRECT\""
+        echo "    },"
+      fi
+    else
+      echo "    \"default_smp_affinity\": {"
+      echo "      \"action_required\": true,"
+      echo "      \"action\": \"CREATE\","
+      echo "      \"required\": \"$(json_escape "${kernel_allowed_mask,,}")\""
+      echo "    },"
+    fi
+
+    # Compare and recommend changes for irqbalance
+    if [[ -f "$IRQBALANCE_CONF" ]]; then
+      if [[ -n "$existing_mask" ]]; then
+        if [[ "$existing_mask" != "${irqbalance_banned_mask,,}" ]]; then
+          echo "    \"irqbalance_config\": {"
+          echo "      \"action_required\": true,"
+          echo "      \"action\": \"UPDATE\","
+          echo "      \"current\": \"$(json_escape "$existing_mask")\","
+          echo "      \"required\": \"$(json_escape "${irqbalance_banned_mask,,}")\""
+          echo "    }"
+        else
+          echo "    \"irqbalance_config\": {"
+          echo "      \"action_required\": false,"
+          echo "      \"action\": \"NONE\","
+          echo "      \"status\": \"CORRECT\""
+          echo "    }"
+        fi
+      else
+        echo "    \"irqbalance_config\": {"
+        echo "      \"action_required\": true,"
+        echo "      \"action\": \"ADD\","
+        echo "      \"required\": \"$(json_escape "${irqbalance_banned_mask,,}")\""
+        echo "    }"
+      fi
+    else
+      echo "    \"irqbalance_config\": {"
+      echo "      \"action_required\": true,"
+      echo "      \"action\": \"CREATE\","
+      echo "      \"required\": \"$(json_escape "${irqbalance_banned_mask,,}")\""
+      echo "    }"
+    fi
+    echo "  },"
+    echo "  \"mode\": \"analysis_only\","
+    echo "  \"changes_made\": false"
+    echo "}"
+    
   else
-    log "  ✗ CREATE REQUIRED: /etc/sysconfig/irqbalance with IRQBALANCE_BANNED_CPUS=\"${irqbalance_banned_mask,,}\""
+    # Text output for sosreport analysis
+    log ""
+    log "CURRENT SYSTEM STATE (from sosreport):"
+    
+    if [[ -f "$SMP_FILE" ]]; then
+      log "  /proc/irq/default_smp_affinity: $current_mask"
+    else
+      log "  /proc/irq/default_smp_affinity: [FILE NOT FOUND]"
+    fi
+
+    if [[ -f "$IRQBALANCE_CONF" ]]; then
+      if [[ -n "$existing_mask" ]]; then
+        log "  IRQBALANCE_BANNED_CPUS: $existing_mask"
+      else
+        log "  IRQBALANCE_BANNED_CPUS: [NOT SET]"
+      fi
+    else
+      log "  /etc/sysconfig/irqbalance: [FILE NOT FOUND]"
+    fi
+    
+    log ""
+    log "RECOMMENDATIONS:"
+    
+    # Compare and recommend changes for default_smp_affinity
+    if [[ -f "$SMP_FILE" ]]; then
+      normalized_current=$(normalize_hex_mask "$current_mask")
+      normalized_allowed=$(normalize_hex_mask "${kernel_allowed_mask,,}")
+      if [[ "$normalized_current" != "$normalized_allowed" ]]; then
+        log "  ✗ UPDATE REQUIRED: /proc/irq/default_smp_affinity"
+        log "    Current:  $current_mask"
+        log "    Required: ${kernel_allowed_mask,,}"
+      else
+        log "  ✓ CORRECT: /proc/irq/default_smp_affinity is already properly configured"
+      fi
+    else
+      log "  ✗ CREATE REQUIRED: /proc/irq/default_smp_affinity = ${kernel_allowed_mask,,}"
+    fi
+
+    # Compare and recommend changes for irqbalance
+    if [[ -f "$IRQBALANCE_CONF" ]]; then
+      if [[ -n "$existing_mask" ]]; then
+        if [[ "$existing_mask" != "${irqbalance_banned_mask,,}" ]]; then
+          log "  ✗ UPDATE REQUIRED: IRQBALANCE_BANNED_CPUS"
+          log "    Current:  $existing_mask"
+          log "    Required: ${irqbalance_banned_mask,,}"
+        else
+          log "  ✓ CORRECT: IRQBALANCE_BANNED_CPUS is already properly configured"
+        fi
+      else
+        log "  ✗ ADD REQUIRED: IRQBALANCE_BANNED_CPUS=\"${irqbalance_banned_mask,,}\""
+      fi
+    else
+      log "  ✗ CREATE REQUIRED: /etc/sysconfig/irqbalance with IRQBALANCE_BANNED_CPUS=\"${irqbalance_banned_mask,,}\""
+    fi
+    
+    log ""
+    log "NOTE: Running in analysis mode - no changes will be made to the system"
+    
+    log ""
+    log "========================================="
+    log "Analysis Complete"
+    log "========================================="
   fi
-  
-  log ""
-  log "NOTE: Running in analysis mode - no changes will be made to the system"
-  
-  log ""
-  log "========================================="
-  log "Analysis Complete"
-  log "========================================="
   
   exit 0
 fi
 
 # Live system modifications (only when not in local mode)
-log ""
-log "CURRENT SYSTEM STATE (live system):"
-
 SMP_FILE="/proc/irq/default_smp_affinity"
 if [ -r "$SMP_FILE" ]; then
   current_smp_mask=$(cat "$SMP_FILE" | tr 'A-Z' 'a-z')
-  log "  /proc/irq/default_smp_affinity: $current_smp_mask"
 else
-  log "  /proc/irq/default_smp_affinity: [CANNOT READ]"
+  current_smp_mask=""
 fi
 
 IRQBALANCE_CONF="/etc/sysconfig/irqbalance"
 if [ -r "$IRQBALANCE_CONF" ]; then
   existing_irq_mask=$(grep '^IRQBALANCE_BANNED_CPUS=' "$IRQBALANCE_CONF" 2>/dev/null | cut -d= -f2 | tr -d '"' | tr 'A-Z' 'a-z')
-  if [[ -n "$existing_irq_mask" ]]; then
-    log "  IRQBALANCE_BANNED_CPUS: $existing_irq_mask"
-  else
-    log "  IRQBALANCE_BANNED_CPUS: [NOT SET]"
-  fi
 else
-  log "  /etc/sysconfig/irqbalance: [CANNOT READ]"
+  existing_irq_mask=""
 fi
 
-log ""
-log "APPLYING CHANGES:"
-
-RESTART_IRQBALANCE=false
-
-# Update /proc/irq/default_smp_affinity
-if [ -w "$SMP_FILE" ]; then
-  normalized_current=$(normalize_hex_mask "$current_smp_mask")
-  normalized_allowed=$(normalize_hex_mask "${kernel_allowed_mask,,}")
-  if [[ "$normalized_current" != "$normalized_allowed" ]]; then
-    echo "$kernel_allowed_mask" > "$SMP_FILE"
-    log "  ✓ UPDATED: /proc/irq/default_smp_affinity"
-    log "    Previous: $current_smp_mask"
-    log "    New:      ${kernel_allowed_mask,,}"
+if [[ "$OUTPUT_FORMAT" == "json" ]]; then
+  echo "  ,"
+  echo "  \"current_system_state\": {"
+  echo "    \"source\": \"live_system\","
+  echo "    \"default_smp_affinity\": {"
+  if [ -r "$SMP_FILE" ]; then
+    echo "      \"readable\": true,"
+    echo "      \"current_mask\": \"$(json_escape "$current_smp_mask")\""
   else
-    log "  ✓ NO CHANGE: /proc/irq/default_smp_affinity already correct"
+    echo "      \"readable\": false,"
+    echo "      \"current_mask\": null"
   fi
-else
-  log "  ✗ FAILED: Cannot write to $SMP_FILE (permission denied)"
-fi
-
-# Update irqbalance configuration
-if [ -w "$IRQBALANCE_CONF" ]; then
-  if [[ "$existing_irq_mask" != "${irqbalance_banned_mask,,}" ]]; then
-    if grep -q '^IRQBALANCE_BANNED_CPUS=' "$IRQBALANCE_CONF"; then
-      sed -i "s/^IRQBALANCE_BANNED_CPUS=.*/IRQBALANCE_BANNED_CPUS=\"$irqbalance_banned_mask\"/" "$IRQBALANCE_CONF"
-      log "  ✓ UPDATED: IRQBALANCE_BANNED_CPUS in $IRQBALANCE_CONF"
-    else
-      echo "IRQBALANCE_BANNED_CPUS=\"$irqbalance_banned_mask\"" >> "$IRQBALANCE_CONF"
-      log "  ✓ ADDED: IRQBALANCE_BANNED_CPUS to $IRQBALANCE_CONF"
-    fi
+  echo "    },"
+  echo "    \"irqbalance_config\": {"
+  if [ -r "$IRQBALANCE_CONF" ]; then
+    echo "      \"readable\": true,"
     if [[ -n "$existing_irq_mask" ]]; then
-      log "    Previous: $existing_irq_mask"
+      echo "      \"banned_cpus_set\": true,"
+      echo "      \"current_mask\": \"$(json_escape "$existing_irq_mask")\""
     else
-      log "    Previous: [NOT SET]"
+      echo "      \"banned_cpus_set\": false,"
+      echo "      \"current_mask\": null"
     fi
-    log "    New:      ${irqbalance_banned_mask,,}"
-    RESTART_IRQBALANCE=true
   else
-    log "  ✓ NO CHANGE: IRQBALANCE_BANNED_CPUS already correct"
+    echo "      \"readable\": false,"
+    echo "      \"banned_cpus_set\": false,"
+    echo "      \"current_mask\": null"
   fi
+  echo "    }"
+  echo "  },"
+  echo "  \"changes_applied\": {"
+  
+  RESTART_IRQBALANCE=false
+  
+  # Update /proc/irq/default_smp_affinity
+  echo "    \"default_smp_affinity\": {"
+  if [ -w "$SMP_FILE" ]; then
+    normalized_current=$(normalize_hex_mask "$current_smp_mask")
+    normalized_allowed=$(normalize_hex_mask "${kernel_allowed_mask,,}")
+    if [[ "$normalized_current" != "$normalized_allowed" ]]; then
+      echo "$kernel_allowed_mask" > "$SMP_FILE"
+      echo "      \"success\": true,"
+      echo "      \"action\": \"UPDATED\","
+      echo "      \"previous\": \"$(json_escape "$current_smp_mask")\","
+      echo "      \"new\": \"$(json_escape "${kernel_allowed_mask,,}")\""
+    else
+      echo "      \"success\": true,"
+      echo "      \"action\": \"NO_CHANGE\","
+      echo "      \"reason\": \"already_correct\""
+    fi
+  else
+    echo "      \"success\": false,"
+    echo "      \"action\": \"FAILED\","
+    echo "      \"reason\": \"permission_denied\""
+  fi
+  echo "    },"
+  
+  # Update irqbalance configuration
+  echo "    \"irqbalance_config\": {"
+  if [ -w "$IRQBALANCE_CONF" ]; then
+    if [[ "$existing_irq_mask" != "${irqbalance_banned_mask,,}" ]]; then
+      if grep -q '^IRQBALANCE_BANNED_CPUS=' "$IRQBALANCE_CONF"; then
+        sed -i "s/^IRQBALANCE_BANNED_CPUS=.*/IRQBALANCE_BANNED_CPUS=\"$irqbalance_banned_mask\"/" "$IRQBALANCE_CONF"
+        echo "      \"success\": true,"
+        echo "      \"action\": \"UPDATED\","
+      else
+        echo "IRQBALANCE_BANNED_CPUS=\"$irqbalance_banned_mask\"" >> "$IRQBALANCE_CONF"
+        echo "      \"success\": true,"
+        echo "      \"action\": \"ADDED\","
+      fi
+      echo "      \"previous\": \"$(json_escape "${existing_irq_mask:-[NOT SET]}")\","
+      echo "      \"new\": \"$(json_escape "${irqbalance_banned_mask,,}")\""
+      RESTART_IRQBALANCE=true
+    else
+      echo "      \"success\": true,"
+      echo "      \"action\": \"NO_CHANGE\","
+      echo "      \"reason\": \"already_correct\""
+    fi
+  else
+    echo "      \"success\": false,"
+    echo "      \"action\": \"FAILED\","
+    echo "      \"reason\": \"permission_denied\""
+  fi
+  echo "    },"
+  
+  # Restart irqbalance service if needed
+  echo "    \"irqbalance_service\": {"
+  if $RESTART_IRQBALANCE; then
+    if systemctl is-active --quiet irqbalance; then
+      if systemctl restart irqbalance; then
+        echo "      \"restart_attempted\": true,"
+        echo "      \"restart_success\": true"
+      else
+        echo "      \"restart_attempted\": true,"
+        echo "      \"restart_success\": false"
+      fi
+    else
+      echo "      \"restart_attempted\": false,"
+      echo "      \"reason\": \"service_not_active\""
+    fi
+  else
+    echo "      \"restart_attempted\": false,"
+    echo "      \"reason\": \"no_changes_made\""
+  fi
+  echo "    }"
+  echo "  },"
+  echo "  \"mode\": \"live_system\","
+  echo "  \"changes_made\": true"
+  echo "}"
+
 else
-  log "  ✗ FAILED: Cannot write to $IRQBALANCE_CONF (permission denied)"
-fi
-
-# Restart irqbalance service if needed
-if $RESTART_IRQBALANCE; then
+  # Text output for live system
   log ""
-  log "SERVICE RESTART:"
-  if systemctl is-active --quiet irqbalance; then
-    log "  Restarting irqbalance service..."
-    if systemctl restart irqbalance; then
-      log "  ✓ SUCCESS: irqbalance service restarted"
+  log "CURRENT SYSTEM STATE (live system):"
+
+  if [ -r "$SMP_FILE" ]; then
+    log "  /proc/irq/default_smp_affinity: $current_smp_mask"
+  else
+    log "  /proc/irq/default_smp_affinity: [CANNOT READ]"
+  fi
+
+  if [ -r "$IRQBALANCE_CONF" ]; then
+    if [[ -n "$existing_irq_mask" ]]; then
+      log "  IRQBALANCE_BANNED_CPUS: $existing_irq_mask"
     else
-      log "  ✗ FAILED: irqbalance service restart failed"
+      log "  IRQBALANCE_BANNED_CPUS: [NOT SET]"
     fi
   else
-    log "  ⚠ SKIPPED: irqbalance service is not active"
+    log "  /etc/sysconfig/irqbalance: [CANNOT READ]"
   fi
-fi
 
-log ""
-log "========================================="
-log "Configuration Complete"
-log "========================================="
+  log ""
+  log "APPLYING CHANGES:"
+
+  RESTART_IRQBALANCE=false
+
+  # Update /proc/irq/default_smp_affinity
+  if [ -w "$SMP_FILE" ]; then
+    normalized_current=$(normalize_hex_mask "$current_smp_mask")
+    normalized_allowed=$(normalize_hex_mask "${kernel_allowed_mask,,}")
+    if [[ "$normalized_current" != "$normalized_allowed" ]]; then
+      echo "$kernel_allowed_mask" > "$SMP_FILE"
+      log "  ✓ UPDATED: /proc/irq/default_smp_affinity"
+      log "    Previous: $current_smp_mask"
+      log "    New:      ${kernel_allowed_mask,,}"
+    else
+      log "  ✓ NO CHANGE: /proc/irq/default_smp_affinity already correct"
+    fi
+  else
+    log "  ✗ FAILED: Cannot write to $SMP_FILE (permission denied)"
+  fi
+
+  # Update irqbalance configuration
+  if [ -w "$IRQBALANCE_CONF" ]; then
+    if [[ "$existing_irq_mask" != "${irqbalance_banned_mask,,}" ]]; then
+      if grep -q '^IRQBALANCE_BANNED_CPUS=' "$IRQBALANCE_CONF"; then
+        sed -i "s/^IRQBALANCE_BANNED_CPUS=.*/IRQBALANCE_BANNED_CPUS=\"$irqbalance_banned_mask\"/" "$IRQBALANCE_CONF"
+        log "  ✓ UPDATED: IRQBALANCE_BANNED_CPUS in $IRQBALANCE_CONF"
+      else
+        echo "IRQBALANCE_BANNED_CPUS=\"$irqbalance_banned_mask\"" >> "$IRQBALANCE_CONF"
+        log "  ✓ ADDED: IRQBALANCE_BANNED_CPUS to $IRQBALANCE_CONF"
+      fi
+      if [[ -n "$existing_irq_mask" ]]; then
+        log "    Previous: $existing_irq_mask"
+      else
+        log "    Previous: [NOT SET]"
+      fi
+      log "    New:      ${irqbalance_banned_mask,,}"
+      RESTART_IRQBALANCE=true
+    else
+      log "  ✓ NO CHANGE: IRQBALANCE_BANNED_CPUS already correct"
+    fi
+  else
+    log "  ✗ FAILED: Cannot write to $IRQBALANCE_CONF (permission denied)"
+  fi
+
+  # Restart irqbalance service if needed
+  if $RESTART_IRQBALANCE; then
+    log ""
+    log "SERVICE RESTART:"
+    if systemctl is-active --quiet irqbalance; then
+      log "  Restarting irqbalance service..."
+      if systemctl restart irqbalance; then
+        log "  ✓ SUCCESS: irqbalance service restarted"
+      else
+        log "  ✗ FAILED: irqbalance service restart failed"
+      fi
+    else
+      log "  ⚠ SKIPPED: irqbalance service is not active"
+    fi
+  fi
+
+  log ""
+  log "========================================="
+  log "Configuration Complete"
+  log "========================================="
+fi
