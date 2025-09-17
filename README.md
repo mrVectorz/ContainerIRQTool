@@ -49,7 +49,8 @@ A high-performance tool for analyzing and configuring IRQ affinity in containeri
 
 ## Overview
 
-This tool helps identify and resolve IRQ affinity violations where interrupt requests are being processed on CPUs that should be isolated for containerized workloads. It provides detailed analysis of IRQ violations with color-coded severity indicators based on interrupt rates.
+This tool helps identify and resolve IRQ affinity violations where interrupt requests are being processed on CPUs that should be isolated for containerized workloads.
+It provides detailed analysis of IRQ violations, NUMA alignment, LLC cache alignment, and PCI device NUMA alignment.
 
 ## Features
 
