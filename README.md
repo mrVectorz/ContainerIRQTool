@@ -2,6 +2,51 @@
 
 A high-performance tool for analyzing and configuring IRQ affinity in containerized environments, specifically designed for CPU isolation scenarios in OpenShift/Kubernetes workloads.
 
+## Table of Contents
+
+- [Overview](#overview)
+- [Features](#features)
+  - [🔍 Analysis Capabilities](#-analysis-capabilities)
+  - [⚙️ Configuration Management](#️-configuration-management)
+  - [📊 Output Formats](#-output-formats)
+- [Requirements](#requirements)
+- [Installation](#installation)
+- [Usage](#usage)
+  - [Basic Syntax](#basic-syntax)
+  - [Command Line Options](#command-line-options)
+  - [Usage Examples](#usage-examples)
+    - [1. Analyze Live System](#1-analyze-live-system)
+    - [2. Analyze SOS Report](#2-analyze-sos-report)
+    - [3. Configuration Only (No Violation Analysis)](#3-configuration-only-no-violation-analysis)
+    - [4. NUMA Alignment Analysis](#4-numa-alignment-analysis)
+    - [5. LLC Alignment Analysis](#5-llc-alignment-analysis)
+    - [6. JSON Output for Automation](#6-json-output-for-automation)
+- [Output Interpretation](#output-interpretation)
+  - [JSON Output Format](#json-output-format)
+  - [IRQ Violation Analysis](#irq-violation-analysis)
+  - [NUMA Alignment Analysis](#numa-alignment-analysis)
+  - [LLC Alignment Analysis](#llc-alignment-analysis)
+  - [Sample LLC Output](#sample-llc-output)
+  - [Sample NUMA Output](#sample-numa-output)
+  - [Configuration Output](#configuration-output)
+- [Advanced Usage](#advanced-usage)
+  - [Python IRQ Analyzer (Direct Usage)](#python-irq-analyzer-direct-usage)
+  - [Integration with Automation](#integration-with-automation)
+- [Performance Characteristics](#performance-characteristics)
+  - [Optimizations](#optimizations)
+  - [Typical Performance](#typical-performance)
+- [Troubleshooting](#troubleshooting)
+  - [Common Issues](#common-issues)
+  - [Debug Mode](#debug-mode)
+- [File Structure](#file-structure)
+- [Use Cases](#use-cases)
+  - [1. OpenShift/Kubernetes Performance Tuning](#1-openshiftkubernetes-performance-tuning)
+  - [2. SOS Report Analysis](#2-sos-report-analysis)
+  - [3. System Configuration Validation](#3-system-configuration-validation)
+- [Contributing](#contributing)
+- [License](#license)
+- [Support](#support)
+
 ## Overview
 
 This tool helps identify and resolve IRQ affinity violations where interrupt requests are being processed on CPUs that should be isolated for containerized workloads. It provides detailed analysis of IRQ violations with color-coded severity indicators based on interrupt rates.
