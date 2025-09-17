@@ -12,6 +12,7 @@ This tool helps identify and resolve IRQ affinity violations where interrupt req
 - **Container CPU Isolation Detection**: Automatically identifies CPUs isolated for containers with `irq-load-balancing.crio.io=disable` and `cpu-quota.crio.io=disable` annotations
 - **IRQ Violation Analysis**: Detects IRQs incorrectly assigned to isolated CPUs
 - **NUMA Alignment Analysis**: Validates PCI device NUMA alignment with isolated container CPUs
+- **LLC Alignment Analysis**: Validates Last Level Cache alignment for isolated container CPUs
 - **Interrupt Rate Analysis**: Calculates interrupts per hour based on system uptime
 - **Color-coded Severity**: Visual indication of IRQ priority (Green/Yellow/Red)
 - **High-Performance Processing**: Optimized Python analyzer for large-scale IRQ analysis
@@ -64,6 +65,7 @@ chmod +x irq_analyzer.py
 | `--local DIR` | Run against sosreport directory instead of live host |
 | `--check-violations` | Enable IRQ violation analysis (disabled by default) |
 | `--check-numa-alignment` | Enable NUMA alignment analysis for isolated containers |
+| `--check-llc-alignment` | Enable LLC alignment analysis for isolated containers |
 | `--full-analysis` | Show detailed analysis for all CPUs (default: limit to first 10) |
 | `--output-format FORMAT` | Output format: 'text' (default) or 'json' |
 | `-h, --help` | Show help message |
@@ -109,7 +111,19 @@ sudo ./ContainerIRQTool.sh --check-violations --full-analysis
 ./ContainerIRQTool.sh --local /path/to/sosreport --check-numa-alignment --output-format json
 ```
 
-#### 5. JSON Output for Automation
+#### 5. LLC Alignment Analysis
+```bash
+# Check LLC alignment for isolated containers
+./ContainerIRQTool.sh --local /path/to/sosreport --check-llc-alignment
+
+# Combined analysis: IRQ violations, NUMA and LLC alignment
+./ContainerIRQTool.sh --local /path/to/sosreport --check-violations --check-numa-alignment --check-llc-alignment
+
+# Full LLC analysis with all containers in JSON format
+./ContainerIRQTool.sh --local /path/to/sosreport --check-llc-alignment --full-analysis --output-format json
+```
+
+#### 6. JSON Output for Automation
 ```bash
 # Generate JSON output for machine processing
 ./ContainerIRQTool.sh --local /path/to/sosreport --output-format json
@@ -237,6 +251,80 @@ The tool uses multiple methods to detect NUMA topology in sosreports:
 - **Mixed**: Complex arrangements based on specific hardware configurations
 
 This ensures NUMA analysis works even when standard sysfs files are missing from sosreports.
+
+### LLC Alignment Analysis
+
+The tool analyzes Last Level Cache (LLC) alignment for isolated container CPUs to identify performance issues on modern CPU chiplet architectures:
+
+#### ✅ **LLC Aligned** - Optimal Performance
+- All container CPUs share the same LLC (Last Level Cache)
+- Optimal cache coherency and memory bandwidth
+- No performance degradation due to cross-LLC communication
+
+#### ❌ **LLC Misaligned** - Performance Impact
+- Container CPUs are spread across multiple LLC domains
+- Increased cache miss penalties and cross-LLC traffic
+- **Significant performance degradation** on chiplet-based CPUs
+
+#### ⚠️ **Analysis Issues**
+- LLC topology information not available
+- Missing `/sys/devices/system/cpu/cpu*/cache/index3/shared_cpu_list` files
+- Unable to determine cache hierarchy
+
+#### 🔧 **LLC Detection Methods**
+The tool reads LLC topology from system cache information:
+
+1. **Primary Method**: Parse `/sys/devices/system/cpu/cpu*/cache/index3/shared_cpu_list` files
+2. **Cache Grouping**: Group CPUs that share the same LLC based on shared_cpu_list content
+3. **Alignment Check**: Verify all container CPUs belong to the same LLC group
+
+**LLC Topology Examples**:
+- **Aligned**: All container CPUs show same shared_cpu_list (e.g., `0-15,32-47`)
+- **Misaligned**: Container CPUs show different shared_cpu_list values
+- **Chiplet Architecture**: Different CPU clusters with separate LLCs (e.g., AMD EPYC, Intel Xeon with chiplets)
+
+### Sample LLC Output
+
+```
+LLC ALIGNMENT ANALYSIS
+============================================================
+
+Color-coded LLC alignment status:
+  🟢 Green: LLC Aligned (Optimal Performance)
+  🟡 Yellow: Analysis Errors
+  🔴 Red: LLC Misaligned (Performance Impact)
+
+SUMMARY:
+  Total containers: 8
+  Isolated containers: 3
+  Containers analyzed: 3
+  LLC aligned: 2
+  LLC misaligned: 1
+  Containers with errors: 0
+
+LLC TOPOLOGY:
+  LLC Node 0: CPUs 0-51,104-155
+  LLC Node 1: CPUs 52-103,156-207
+
+DETAILED ANALYSIS:
+
+Container: dpdk-workload (a1b2c3d4e5f6)
+  CPUs: 2-5,58-61
+  PCI Devices: 0000:89:00.5, 0000:89:01.4
+  ✓ LLC Alignment: ALIGNED                      # 🟢 Green text
+  Container LLC nodes: 0
+
+Container: mixed-workload (b2c3d4e5f7a8)
+  CPUs: 30-33,86-89
+  ✗ LLC Alignment: MISALIGNED                   # 🔴 Red text
+  Misaligned CPUs: 86-89                        # 🔴 Red text
+  Container LLC nodes: 0, 1
+
+Container: numa-aligned (c3d4e5f8a9b1)
+  CPUs: 52-55,100-103
+  ✓ LLC Alignment: ALIGNED                      # 🟢 Green text
+  Container LLC nodes: 1
+```
 
 ### Sample NUMA Output
 
@@ -402,6 +490,7 @@ ContainerIRQTool/
 ├── ContainerIRQTool.sh    # Main bash script
 ├── irq_analyzer.py        # High-performance IRQ violation analyzer
 ├── numa_analyzer.py       # NUMA alignment analyzer for containers
+├── llc_analyzer.py        # LLC alignment analyzer for containers
 └── README.md              # This documentation
 ```
 
@@ -410,6 +499,7 @@ ContainerIRQTool/
 ### 1. **OpenShift/Kubernetes Performance Tuning**
 - Identify IRQ interference with isolated container workloads
 - Validate NUMA alignment for SR-IOV and DPDK workloads
+- Validate LLC alignment for chiplet-based CPU architectures
 - Optimize CPU isolation for latency-sensitive applications
 - Validate IRQ configuration in production environments
 
@@ -417,11 +507,13 @@ ContainerIRQTool/
 - Post-incident analysis of IRQ-related performance issues
 - Historical trending of IRQ violations
 - NUMA misalignment analysis for performance degradation
+- LLC misalignment analysis for chiplet architecture issues
 - Capacity planning for CPU isolation requirements
 
 ### 3. **System Configuration Validation**
 - Verify IRQ affinity settings after system changes
 - Validate PCI device NUMA placement for containers
+- Validate LLC alignment for optimal cache performance
 - Automate IRQ configuration in deployment pipelines
 - Compliance checking for performance requirements
 

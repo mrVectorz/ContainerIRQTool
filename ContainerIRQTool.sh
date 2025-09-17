@@ -5,6 +5,7 @@ LOCAL_MODE=false
 BASE_DIR="."
 CHECK_VIOLATIONS=false
 CHECK_NUMA=false
+CHECK_LLC=false
 FULL_ANALYSIS=false
 OUTPUT_FORMAT="text"
 
@@ -28,6 +29,10 @@ while [[ $# -gt 0 ]]; do
       CHECK_NUMA=true
       shift
       ;;
+    --check-llc-alignment)
+      CHECK_LLC=true
+      shift
+      ;;
     --full-analysis)
       FULL_ANALYSIS=true
       shift
@@ -42,10 +47,11 @@ while [[ $# -gt 0 ]]; do
       fi
       ;;
     -h|--help)
-      echo "Usage: $0 [--local /path/to/sosreport] [--check-violations] [--check-numa-alignment] [--full-analysis] [--output-format FORMAT]"
+      echo "Usage: $0 [--local /path/to/sosreport] [--check-violations] [--check-numa-alignment] [--check-llc-alignment] [--full-analysis] [--output-format FORMAT]"
       echo "  --local DIR              Run against sosreport directory instead of live host"
       echo "  --check-violations       Enable IRQ violation analysis (slower, disabled by default)"
       echo "  --check-numa-alignment   Enable NUMA alignment analysis for isolated containers"
+      echo "  --check-llc-alignment    Enable LLC alignment analysis for isolated containers"
       echo "  --full-analysis          Show detailed analysis for all CPUs (default: limit to top 10 most offending)"
       echo "  --output-format FORMAT   Output format: 'text' (default) or 'json'"
       echo "  -h, --help               Show this help message"
@@ -693,6 +699,49 @@ check_irq_violations() {
     log "    and restarting irqbalance to redistribute existing IRQs"
 }
 
+# JSON version of LLC alignment checking
+check_llc_alignment_json() {
+    local base_dir="$1"
+    
+    # Get script directory and LLC analyzer
+    SCRIPT_DIR="$(dirname "$(readlink -f "$0")")"
+    LLC_SCRIPT="$SCRIPT_DIR/llc_analyzer.py"
+    
+    if [[ ! -f "$LLC_SCRIPT" ]]; then
+        echo "    \"error\": true,"
+        echo "    \"message\": \"LLC analyzer not found: $LLC_SCRIPT\""
+        return
+    fi
+    
+    # Prepare arguments for LLC script
+    local llc_args=""
+    if [[ "$LOCAL_MODE" == "true" ]]; then
+        llc_args="--sosreport-dir $base_dir"
+    else
+        # Live system analysis - no special args needed
+        llc_args=""
+    fi
+    
+    # Add full-analysis flag if needed
+    if [[ "$FULL_ANALYSIS" == "true" ]]; then
+        llc_args="$llc_args --full-analysis"
+    fi
+    
+    # Run LLC analyzer with JSON output
+    local analyzer_output
+    analyzer_output=$(python3 "$LLC_SCRIPT" $llc_args --output-format json 2>/dev/null)
+    
+    if [[ $? -ne 0 || -z "$analyzer_output" ]]; then
+        echo "    \"error\": true,"
+        echo "    \"message\": \"LLC analyzer failed to run\""
+        return
+    fi
+    
+    # Output the JSON data from the LLC analyzer (removing the outer braces)
+    echo "    \"analysis_available\": true,"
+    echo "$analyzer_output" | sed '1d;$d' | sed 's/^/    /'
+}
+
 # JSON version of NUMA alignment checking
 check_numa_alignment_json() {
     local base_dir="$1"
@@ -730,6 +779,50 @@ check_numa_alignment_json() {
     # Output the JSON data from the NUMA analyzer (removing the outer braces)
     echo "    \"analysis_available\": true,"
     echo "$analyzer_output" | sed '1d;$d' | sed 's/^/    /'
+}
+
+# Text version of LLC alignment checking
+check_llc_alignment_text() {
+    local base_dir="$1"
+    
+    log ""
+    log "LLC ALIGNMENT ANALYSIS:"
+    log "======================"
+    
+    # Get script directory and LLC analyzer
+    SCRIPT_DIR="$(dirname "$(readlink -f "$0")")"
+    LLC_SCRIPT="$SCRIPT_DIR/llc_analyzer.py"
+    
+    if [[ ! -f "$LLC_SCRIPT" ]]; then
+        log "  ✗ ERROR: LLC analyzer not found: $LLC_SCRIPT"
+        return
+    fi
+    
+    # Prepare arguments for LLC script
+    local llc_args=""
+    if [[ "$LOCAL_MODE" == "true" ]]; then
+        llc_args="--sosreport-dir $base_dir"
+    else
+        # Live system analysis - no special args needed
+        llc_args=""
+    fi
+    
+    # Add full-analysis flag if needed
+    if [[ "$FULL_ANALYSIS" == "true" ]]; then
+        llc_args="$llc_args --full-analysis"
+    fi
+    
+    # Run LLC analyzer with text output
+    local analyzer_output
+    analyzer_output=$(python3 "$LLC_SCRIPT" $llc_args --output-format text 2>/dev/null)
+    
+    if [[ $? -ne 0 || -z "$analyzer_output" ]]; then
+        log "  ✗ ERROR: LLC analyzer failed to run"
+        return
+    fi
+    
+    # Display the output
+    echo "$analyzer_output"
 }
 
 # Text version of NUMA alignment checking
@@ -887,6 +980,19 @@ if [[ "$OUTPUT_FORMAT" == "json" ]]; then
     echo "    \"enabled\": false,"
     echo "    \"message\": \"Skipped (use --check-numa-alignment to enable)\""
   fi
+  echo "  },"
+  echo "  \"llc_alignment_analysis\": {"
+  if [[ "$CHECK_LLC" == "true" ]]; then
+    echo "    \"enabled\": true,"
+    if [[ "$LOCAL_MODE" == "true" ]]; then
+      check_llc_alignment_json "$BASE_DIR"
+    else
+      check_llc_alignment_json ""
+    fi
+  else
+    echo "    \"enabled\": false,"
+    echo "    \"message\": \"Skipped (use --check-llc-alignment to enable)\""
+  fi
   echo "  }"
 else
   # Check for IRQ violations (works for both local and live modes)
@@ -915,6 +1021,20 @@ else
     log "NUMA ALIGNMENT ANALYSIS:"
     log "========================"
     log "  Skipped (use --check-numa-alignment to enable)"
+  fi
+  
+  # Check for LLC alignment (works for both local and live modes)
+  if [[ "$CHECK_LLC" == "true" ]]; then
+    if [[ "$LOCAL_MODE" == "true" ]]; then
+      check_llc_alignment_text "$BASE_DIR"
+    else
+      check_llc_alignment_text ""
+    fi
+  else
+    log ""
+    log "LLC ALIGNMENT ANALYSIS:"
+    log "======================"
+    log "  Skipped (use --check-llc-alignment to enable)"
   fi
 fi
 
