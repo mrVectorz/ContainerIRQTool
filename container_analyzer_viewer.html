@@ -1,0 +1,1853 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Container IRQ Analysis Viewer</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #f5f5f5;
+            color: #333;
+            line-height: 1.6;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px;
+            text-align: center;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+
+        .header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+        }
+
+        .header p {
+            font-size: 1.1em;
+            opacity: 0.9;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        .file-upload {
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+            text-align: center;
+        }
+
+        .file-input-wrapper {
+            display: inline-block;
+            position: relative;
+            overflow: hidden;
+            background: #667eea;
+            color: white;
+            padding: 12px 25px;
+            border-radius: 5px;
+            cursor: pointer;
+            transition: background 0.3s;
+        }
+
+        .file-input-wrapper:hover {
+            background: #5a67d8;
+        }
+
+        .file-input-wrapper input[type=file] {
+            position: absolute;
+            left: -9999px;
+        }
+
+        .tabs {
+            display: flex;
+            background: white;
+            border-radius: 10px 10px 0 0;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            overflow: hidden;
+        }
+
+        .tab {
+            flex: 1;
+            padding: 15px 20px;
+            background: #e2e8f0;
+            border: none;
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: 500;
+            transition: all 0.3s;
+            border-right: 1px solid #cbd5e0;
+        }
+
+        .tab:last-child {
+            border-right: none;
+        }
+
+        .tab.active {
+            background: white;
+            color: #667eea;
+            box-shadow: inset 0 -3px 0 #667eea;
+        }
+
+        .tab:hover:not(.active) {
+            background: #f7fafc;
+        }
+
+        .tab-content {
+            background: white;
+            min-height: 600px;
+            padding: 30px;
+            border-radius: 0 0 10px 10px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            display: none;
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+
+        /* Summary Tab Styles */
+        .summary-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+
+        .summary-card {
+            background: #f8fafc;
+            padding: 20px;
+            border-radius: 10px;
+            border-left: 4px solid #667eea;
+        }
+
+        .summary-card h3 {
+            color: #2d3748;
+            margin-bottom: 15px;
+            font-size: 1.2em;
+        }
+
+        .stat-item {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 8px;
+            padding: 5px 0;
+        }
+
+        .stat-value {
+            font-weight: bold;
+        }
+
+        .status-good { color: #38a169; }
+        .status-warning { color: #d69e2e; }
+        .status-error { color: #e53e3e; }
+
+        /* Container Grid Styles */
+        .container-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+            gap: 20px;
+            margin-top: 20px;
+        }
+
+        .container-box {
+            background: white;
+            border: 2px solid #e2e8f0;
+            border-radius: 10px;
+            padding: 20px;
+            transition: all 0.3s;
+            position: relative;
+            overflow: hidden;
+            user-select: text;
+        }
+
+        .container-box:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 20px rgba(0,0,0,0.15);
+        }
+
+        .container-box.status-good {
+            border-left: 6px solid #38a169;
+            background: linear-gradient(135deg, #f0fff4 0%, #c6f6d5 100%);
+        }
+
+        .container-box.status-warning {
+            border-left: 6px solid #d69e2e;
+            background: linear-gradient(135deg, #fffbeb 0%, #faf089 100%);
+        }
+
+        .container-box.status-error {
+            border-left: 6px solid #e53e3e;
+            background: linear-gradient(135deg, #fff5f5 0%, #fed7d7 100%);
+        }
+
+        .container-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+            position: relative;
+        }
+
+        .expand-icon {
+            position: absolute;
+            right: 0;
+            top: 50%;
+            transform: translateY(-50%);
+            width: 24px;
+            height: 24px;
+            background: rgba(102, 126, 234, 0.1);
+            border: 1px solid #667eea;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            font-size: 12px;
+            color: #667eea;
+            transition: all 0.2s;
+            z-index: 10;
+        }
+
+        .expand-icon:hover {
+            background: rgba(102, 126, 234, 0.2);
+            transform: translateY(-50%) scale(1.1);
+        }
+
+        .expand-icon span {
+            transition: transform 0.3s;
+        }
+
+        .expand-icon.expanded span {
+            transform: rotate(180deg);
+        }
+
+        .container-name {
+            font-weight: bold;
+            font-size: 1.1em;
+            color: #2d3748;
+            max-width: calc(100% - 40px);
+            word-wrap: break-word;
+        }
+
+        .container-id {
+            font-family: monospace;
+            font-size: 0.8em;
+            color: #718096;
+            background: rgba(255,255,255,0.8);
+            padding: 2px 6px;
+            border-radius: 4px;
+        }
+
+        .container-stats {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+            font-size: 0.9em;
+        }
+
+        .container-detail {
+            background: #f7fafc;
+            padding: 20px;
+            border-radius: 10px;
+            margin-top: 20px;
+            display: none;
+        }
+
+        .container-detail.expanded {
+            display: block;
+            animation: slideDown 0.3s ease;
+        }
+
+        @keyframes slideDown {
+            from {
+                opacity: 0;
+                max-height: 0;
+            }
+            to {
+                opacity: 1;
+                max-height: 1000px;
+            }
+        }
+
+        /* NUMA Diagram Styles */
+        .numa-topology {
+            background: #f8fafc;
+            border-radius: 10px;
+            padding: 20px;
+            margin-top: 20px;
+        }
+
+        .numa-node {
+            border: 2px solid #4a5568;
+            border-radius: 10px;
+            margin: 15px;
+            padding: 20px;
+            background: linear-gradient(135deg, #e2e8f0 0%, #cbd5e0 100%);
+            position: relative;
+        }
+
+        .numa-node-header {
+            font-weight: bold;
+            font-size: 1.2em;
+            color: #2d3748;
+            margin-bottom: 15px;
+            text-align: center;
+        }
+
+        .llc-container {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+        }
+
+        .llc-node {
+            border: 1px solid #667eea;
+            border-radius: 8px;
+            padding: 15px;
+            background: linear-gradient(135deg, #ebf4ff 0%, #bee3f8 100%);
+        }
+
+        .llc-header {
+            font-weight: bold;
+            color: #2b6cb0;
+            margin-bottom: 10px;
+            text-align: center;
+        }
+
+        .cpu-list {
+            font-family: monospace;
+            font-size: 0.8em;
+            color: #4a5568;
+            margin-bottom: 10px;
+        }
+
+        .container-in-llc {
+            background: rgba(102, 126, 234, 0.1);
+            border: 1px solid #667eea;
+            border-radius: 4px;
+            padding: 5px 8px;
+            margin: 2px;
+            display: inline-block;
+            font-size: 0.8em;
+            color: #2b6cb0;
+        }
+
+        .pci-device {
+            background: rgba(214, 158, 46, 0.1);
+            border: 1px solid #d69e2e;
+            border-radius: 4px;
+            padding: 3px 6px;
+            margin: 2px;
+            display: inline-block;
+            font-size: 0.7em;
+            color: #744210;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 50px;
+            color: #718096;
+        }
+
+        .error {
+            background: #fed7d7;
+            color: #c53030;
+            padding: 15px;
+            border-radius: 5px;
+            margin: 20px 0;
+            border-left: 4px solid #e53e3e;
+        }
+
+        /* Responsive Design */
+        @media (max-width: 768px) {
+            .container {
+                padding: 10px;
+            }
+            
+            .tabs {
+                flex-direction: column;
+            }
+            
+            .tab {
+                border-right: none;
+                border-bottom: 1px solid #cbd5e0;
+            }
+            
+            .summary-grid {
+                grid-template-columns: 1fr;
+            }
+            
+            .container-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        /* IRQ Graphs Styles */
+        .chart-container {
+            background: white;
+            border-radius: 10px;
+            padding: 20px;
+            margin: 20px 0;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+
+        .chart-title {
+            font-size: 1.3em;
+            font-weight: bold;
+            color: #2d3748;
+            margin-bottom: 15px;
+            text-align: center;
+        }
+
+        .container-info-banner {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+        }
+
+        .container-info-banner h3 {
+            margin: 0 0 10px 0;
+            font-size: 1.4em;
+        }
+
+        .chart-canvas {
+            position: relative;
+            height: 400px;
+            margin: 20px 0;
+        }
+
+        .cpu-charts-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(500px, 1fr));
+            gap: 20px;
+            margin-top: 30px;
+        }
+
+        .cpu-chart-container {
+            background: #f8fafc;
+            border-radius: 8px;
+            padding: 15px;
+            border-left: 4px solid #667eea;
+        }
+
+        .cpu-chart-title {
+            font-weight: bold;
+            color: #2d3748;
+            margin-bottom: 10px;
+            text-align: center;
+        }
+
+        .cpu-chart-canvas {
+            position: relative;
+            height: 300px;
+        }
+
+        /* Utility Classes */
+        .text-center { text-align: center; }
+        .text-small { font-size: 0.8em; }
+        .text-mono { font-family: monospace; }
+        .mb-20 { margin-bottom: 20px; }
+        .mt-20 { margin-top: 20px; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>Container IRQ Analysis Viewer</h1>
+        <p>Interactive visualization of container CPU, NUMA, LLC, and IRQ analysis results</p>
+    </div>
+
+    <div class="container">
+        <div class="file-upload">
+            <h3>Load Analysis Results</h3>
+            <p>Upload your output.json file to visualize the analysis results</p>
+            <br>
+            <label class="file-input-wrapper">
+                <input type="file" id="jsonFile" accept=".json" />
+                Choose JSON File
+            </label>
+        </div>
+
+        <div id="analysisContainer" style="display: none;">
+            <div class="tabs">
+                <button class="tab active" onclick="showTab('summary')">Summary & Overview</button>
+                <button class="tab" onclick="showTab('containers')">Container Analysis</button>
+                <button class="tab" onclick="showTab('topology')">NUMA Topology</button>
+                <button class="tab" onclick="showTab('graphs')" id="graphsTab" style="display: none;">IRQ Graphs</button>
+            </div>
+
+            <div id="summary" class="tab-content active">
+                <h2>Analysis Summary</h2>
+                <div id="summaryContent">
+                    <div class="loading">Loading summary data...</div>
+                </div>
+            </div>
+
+            <div id="containers" class="tab-content">
+                <h2>Container Analysis</h2>
+                <div class="mb-20">
+                    <input type="text" id="containerSearch" placeholder="Search containers..." 
+                           style="width: 100%; padding: 10px; border: 1px solid #e2e8f0; border-radius: 5px; font-size: 16px;">
+                </div>
+                <div id="containerContent">
+                    <div class="loading">Loading container data...</div>
+                </div>
+            </div>
+
+            <div id="topology" class="tab-content">
+                <h2>NUMA Topology Visualization</h2>
+                <div id="topologyContent">
+                    <div class="loading">Loading topology data...</div>
+                </div>
+            </div>
+
+            <div id="graphs" class="tab-content">
+                <h2>IRQ Analysis Graphs</h2>
+                <div id="graphsContent">
+                    <div class="loading">Select a container to view IRQ graphs...</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let analysisData = null;
+
+        // File upload handler
+        document.getElementById('jsonFile').addEventListener('change', function(event) {
+            const file = event.target.files[0];
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    try {
+                        analysisData = JSON.parse(e.target.result);
+                        document.getElementById('analysisContainer').style.display = 'block';
+                        loadSummaryData();
+                        loadContainerData();
+                        loadTopologyData();
+                    } catch (error) {
+                        showError('Error parsing JSON file: ' + error.message);
+                    }
+                };
+                reader.readAsText(file);
+            }
+        });
+
+        // Tab switching
+        function showTab(tabName) {
+            // Remove active class from all tabs and content
+            document.querySelectorAll('.tab').forEach(tab => tab.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
+            
+            // Add active class to selected tab and content
+            event.target.classList.add('active');
+            document.getElementById(tabName).classList.add('active');
+        }
+
+        // Show container graphs tab
+        function showContainerGraphs(containerId, containerName, event) {
+            if (event) {
+                event.stopPropagation();
+            }
+            
+            // Show the graphs tab
+            const graphsTab = document.getElementById('graphsTab');
+            graphsTab.style.display = 'block';
+            
+            // Switch to graphs tab
+            document.querySelectorAll('.tab').forEach(tab => tab.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
+            
+            graphsTab.classList.add('active');
+            document.getElementById('graphs').classList.add('active');
+            
+            // Load the graphs for this container
+            loadContainerGraphs(containerId, containerName);
+        }
+
+        // Load summary data
+        function loadSummaryData() {
+            const summaryElement = document.getElementById('summaryContent');
+            
+            if (!analysisData) {
+                summaryElement.innerHTML = '<div class="error">No analysis data loaded</div>';
+                return;
+            }
+
+            let html = '<div class="summary-grid">';
+
+            // System Overview
+            html += `
+                <div class="summary-card">
+                    <h3>System Overview</h3>
+                    <div class="stat-item">
+                        <span>Analysis Type:</span>
+                        <span class="stat-value">${analysisData.analysis_type || 'N/A'}</span>
+                    </div>
+                    <div class="stat-item">
+                        <span>Mode:</span>
+                        <span class="stat-value">${analysisData.mode || 'N/A'}</span>
+                    </div>
+                    <div class="stat-item">
+                        <span>Total CPUs:</span>
+                        <span class="stat-value">${analysisData.computed_irq_configuration?.host_cpu_count || 'N/A'}</span>
+                    </div>
+                    <div class="stat-item">
+                        <span>Isolated CPUs:</span>
+                        <span class="stat-value text-small">${analysisData.container_analysis?.isolated_cpus_formatted || 'N/A'}</span>
+                    </div>
+                </div>
+            `;
+
+            // IRQ Configuration
+            if (analysisData.computed_irq_configuration) {
+                const irqConfig = analysisData.computed_irq_configuration;
+                html += `
+                    <div class="summary-card">
+                        <h3>IRQ Configuration</h3>
+                        <div class="stat-item">
+                            <span>Allowed IRQ CPUs:</span>
+                            <span class="stat-value text-small">${irqConfig.allowed_irq_cpus?.cpus_formatted || 'N/A'}</span>
+                        </div>
+                        <div class="stat-item">
+                            <span>Banned IRQ CPUs:</span>
+                            <span class="stat-value text-small">${irqConfig.banned_irq_cpus?.cpus_formatted || 'N/A'}</span>
+                        </div>
+                        <div class="stat-item">
+                            <span>Kernel Mask:</span>
+                            <span class="stat-value text-mono text-small">${irqConfig.allowed_irq_cpus?.kernel_mask || 'N/A'}</span>
+                        </div>
+                    </div>
+                `;
+            }
+
+            // NUMA Analysis Summary
+            if (analysisData.numa_alignment_analysis?.summary) {
+                const numaSummary = analysisData.numa_alignment_analysis.summary;
+                html += `
+                    <div class="summary-card">
+                        <h3>NUMA Analysis</h3>
+                        <div class="stat-item">
+                            <span>Total Containers:</span>
+                            <span class="stat-value">${numaSummary.total_containers || 0}</span>
+                        </div>
+                        <div class="stat-item">
+                            <span>Isolated Containers:</span>
+                            <span class="stat-value">${numaSummary.isolated_containers || 0}</span>
+                        </div>
+                        <div class="stat-item">
+                            <span>Aligned Containers:</span>
+                            <span class="stat-value status-good">${numaSummary.aligned_containers || 0}</span>
+                        </div>
+                        <div class="stat-item">
+                            <span>Misaligned Containers:</span>
+                            <span class="stat-value ${numaSummary.misaligned_containers > 0 ? 'status-error' : 'status-good'}">${numaSummary.misaligned_containers || 0}</span>
+                        </div>
+                        <div class="stat-item">
+                            <span>Containers with Errors:</span>
+                            <span class="stat-value ${numaSummary.containers_with_errors > 0 ? 'status-error' : 'status-good'}">${numaSummary.containers_with_errors || 0}</span>
+                        </div>
+                    </div>
+                `;
+            }
+
+            // LLC Analysis Summary
+            if (analysisData.llc_alignment_analysis?.summary) {
+                const llcSummary = analysisData.llc_alignment_analysis.summary;
+                html += `
+                    <div class="summary-card">
+                        <h3>LLC Analysis</h3>
+                        <div class="stat-item">
+                            <span>Total Containers:</span>
+                            <span class="stat-value">${llcSummary.total_containers || 0}</span>
+                        </div>
+                        <div class="stat-item">
+                            <span>Analyzed Containers:</span>
+                            <span class="stat-value">${llcSummary.containers_analyzed || 0}</span>
+                        </div>
+                        <div class="stat-item">
+                            <span>Aligned Containers:</span>
+                            <span class="stat-value status-good">${llcSummary.aligned_containers || 0}</span>
+                        </div>
+                        <div class="stat-item">
+                            <span>Misaligned Containers:</span>
+                            <span class="stat-value ${llcSummary.misaligned_containers > 0 ? 'status-error' : 'status-good'}">${llcSummary.misaligned_containers || 0}</span>
+                        </div>
+                    </div>
+                `;
+            }
+
+            // IRQ Violations Summary
+            if (analysisData.irq_violation_analysis) {
+                const irqAnalysis = analysisData.irq_violation_analysis;
+                const irqStats = calculateIRQStatistics(irqAnalysis);
+
+                html += `
+                    <div class="summary-card">
+                        <h3>IRQ Violations</h3>
+                        <div class="stat-item">
+                            <span>Violations Possible:</span>
+                            <span class="stat-value ${irqAnalysis.violations_possible ? 'status-warning' : 'status-good'}">${irqAnalysis.violations_possible ? 'Yes' : 'No'}</span>
+                        </div>
+                        <div class="stat-item">
+                            <span>Affected CPUs:</span>
+                            <span class="stat-value ${irqStats.affectedCPUs > 0 ? 'status-error' : 'status-good'}">${irqStats.affectedCPUs}</span>
+                        </div>
+                        <div class="stat-item">
+                            <span>Total Violations:</span>
+                            <span class="stat-value ${irqStats.totalViolations > 0 ? 'status-error' : 'status-good'}">${irqStats.totalViolations.toLocaleString()}</span>
+                        </div>
+                        <div class="stat-item">
+                            <span>Total IRQs Checked:</span>
+                            <span class="stat-value">${irqStats.totalIRQs.toLocaleString()}</span>
+                        </div>
+                        <div style="margin-top: 15px; padding: 15px; background: #f8fafc; border-radius: 5px; font-family: monospace; font-size: 0.9em; line-height: 1.6;">
+                            <strong>SUMMARY:</strong> ${irqStats.affectedCPUs} CPUs with violations<br>
+                            🔴 <span class="status-error">Critical IRQs (≥1000/hr): ${irqStats.criticalIRQs.toLocaleString()}</span><br>
+                            🟡 <span class="status-warning">Warning IRQs (<1000/hr): ${irqStats.warningIRQs.toLocaleString()}</span><br>
+                            🟢 <span class="status-good">Zero interrupt IRQs: ${irqStats.zeroIRQs.toLocaleString()}</span>
+                        </div>
+                    </div>
+                `;
+            }
+
+            html += '</div>';
+
+            // Add current system state section
+            html += `
+                <div class="summary-card mt-20">
+                    <h3>Current System Configuration</h3>
+                    <div id="systemConfig">
+                        ${generateSystemConfig()}
+                    </div>
+                </div>
+            `;
+
+            // Add recommendations section
+            html += `
+                <div class="summary-card mt-20">
+                    <h3>Recommendations</h3>
+                    <div id="recommendations">
+                        ${generateRecommendations()}
+                    </div>
+                </div>
+            `;
+
+            summaryElement.innerHTML = html;
+        }
+
+        // Calculate comprehensive IRQ statistics
+        function calculateIRQStatistics(irqAnalysis) {
+            let totalViolations = 0;
+            let affectedCPUs = 0;
+            let criticalIRQs = 0;  // ≥1000/hr (per CPU instance)
+            let warningIRQs = 0;   // >0 but <1000/hr (per CPU instance)
+            let zeroIRQs = 0;      // 0/hr (per CPU instance)
+            
+            // Track unique IRQs across all CPUs
+            const uniqueIRQs = new Set();
+            
+            if (irqAnalysis.violations) {
+                affectedCPUs = Object.keys(irqAnalysis.violations).length;
+                
+                Object.values(irqAnalysis.violations).forEach(cpu => {
+                    if (cpu.violations && cpu.violations.length) {
+                        totalViolations += cpu.violations.length;
+                    }
+                    
+                    // Count IRQs by rate category (per CPU instance)
+                    if (cpu.violation_details && cpu.violation_details.length) {
+                        cpu.violation_details.forEach(detail => {
+                            // Track unique IRQ numbers
+                            uniqueIRQs.add(detail.irq);
+                            
+                            // Count by rate category (each CPU instance counted separately)
+                            const rate = detail.interrupts_per_hour || 0;
+                            if (rate >= 1000) {
+                                criticalIRQs++;
+                            } else if (rate > 0) {
+                                warningIRQs++;
+                            } else {
+                                zeroIRQs++;
+                            }
+                        });
+                    }
+                });
+            }
+            
+            return {
+                totalViolations,
+                affectedCPUs,
+                totalIRQs: uniqueIRQs.size,  // Count of unique IRQ numbers
+                criticalIRQs,
+                warningIRQs,
+                zeroIRQs
+            };
+        }
+
+        // Generate current system configuration display
+        function generateSystemConfig() {
+            let config = [];
+
+            // Show current IRQ configuration files
+            config.push(`
+                <div style="margin: 10px 0; padding: 15px; background: #f8fafc; border-radius: 5px; border-left: 4px solid #667eea;">
+                    <h4 style="margin-bottom: 10px; color: #2d3748;">Current IRQ Affinity Settings</h4>
+                    <div style="font-family: monospace; font-size: 0.9em; line-height: 1.6;">
+                        <div style="margin: 8px 0;">
+                            <strong>/proc/irq/default_smp_affinity:</strong><br>
+                            <span style="background: #e2e8f0; padding: 4px 8px; border-radius: 3px; color: #2d3748;">
+                                ${analysisData.computed_irq_configuration?.allowed_irq_cpus?.kernel_mask || 'Not available'}
+                            </span>
+                        </div>
+                        <div style="margin: 8px 0;">
+                            <strong>/etc/sysconfig/irqbalance IRQBALANCE_BANNED_CPUS:</strong><br>
+                            <span style="background: #e2e8f0; padding: 4px 8px; border-radius: 3px; color: #2d3748;">
+                                ${analysisData.computed_irq_configuration?.banned_irq_cpus?.irqbalance_mask || 'Not available'}
+                            </span>
+                        </div>
+                    </div>
+                </div>
+            `);
+
+            // Show recommended settings if different
+            if (analysisData.computed_irq_configuration) {
+                const current_smp = analysisData.computed_irq_configuration.allowed_irq_cpus?.kernel_mask;
+                const current_banned = analysisData.computed_irq_configuration.banned_irq_cpus?.irqbalance_mask;
+                
+                config.push(`
+                    <div style="margin: 10px 0; padding: 15px; background: #f0fff4; border-radius: 5px; border-left: 4px solid #38a169;">
+                        <h4 style="margin-bottom: 10px; color: #2d3748;">Recommended IRQ Settings</h4>
+                        <div style="font-family: monospace; font-size: 0.9em; line-height: 1.6;">
+                            <div style="margin: 8px 0;">
+                                <strong>echo "${current_smp}" > /proc/irq/default_smp_affinity</strong>
+                            </div>
+                            <div style="margin: 8px 0;">
+                                <strong>IRQBALANCE_BANNED_CPUS="${current_banned}"</strong>
+                            </div>
+                        </div>
+                    </div>
+                `);
+            }
+
+            return config.join('');
+        }
+
+        // Generate recommendations based on analysis
+        function generateRecommendations() {
+            let recommendations = [];
+
+            if (analysisData.numa_alignment_analysis?.summary) {
+                const numaSummary = analysisData.numa_alignment_analysis.summary;
+                if (numaSummary.misaligned_containers > 0) {
+                    recommendations.push(`⚠️ ${numaSummary.misaligned_containers} container(s) have NUMA misalignment. Consider adjusting CPU affinities.`);
+                }
+                if (numaSummary.containers_with_errors > 0) {
+                    recommendations.push(`❌ ${numaSummary.containers_with_errors} container(s) have analysis errors. Check PCI device assignments.`);
+                }
+            }
+
+            if (analysisData.llc_alignment_analysis?.summary) {
+                const llcSummary = analysisData.llc_alignment_analysis.summary;
+                if (llcSummary.misaligned_containers > 0) {
+                    recommendations.push(`⚠️ ${llcSummary.misaligned_containers} container(s) have LLC misalignment. Consider grouping CPUs within LLC boundaries.`);
+                }
+            }
+
+            if (analysisData.irq_violation_analysis?.violations) {
+                const irqStats = calculateIRQStatistics(analysisData.irq_violation_analysis);
+                if (irqStats.totalViolations > 0) {
+                    recommendations.push(`❌ ${irqStats.affectedCPUs} CPU(s) have ${irqStats.totalViolations.toLocaleString()} IRQ violations total. Update IRQ affinity configuration.`);
+                    if (irqStats.criticalIRQs > 0) {
+                        recommendations.push(`🔴 Priority: ${irqStats.criticalIRQs.toLocaleString()} critical IRQs (≥1000/hr) need immediate attention.`);
+                    }
+                    if (analysisData.computed_irq_configuration) {
+                        recommendations.push(`💡 Apply the recommended IRQ settings shown in the system configuration above.`);
+                    }
+                }
+            }
+
+            if (recommendations.length === 0) {
+                recommendations.push('✅ All checks passed! Your system configuration looks optimal.');
+            }
+
+            return recommendations.map(rec => `<div style="margin: 10px 0; padding: 10px; background: rgba(0,0,0,0.05); border-radius: 5px;">${rec}</div>`).join('');
+        }
+
+        // Load container data
+        function loadContainerData() {
+            const containerElement = document.getElementById('containerContent');
+            
+            if (!analysisData || !analysisData.numa_alignment_analysis?.containers) {
+                containerElement.innerHTML = '<div class="error">No container data available</div>';
+                return;
+            }
+
+            const containers = analysisData.numa_alignment_analysis.containers;
+            let html = '<div class="container-grid">';
+
+            containers.forEach((container, index) => {
+                const status = getContainerStatus(container);
+                const statusClass = status.class;
+                const issues = getContainerIssues(container);
+                const irqViolations = getContainerIRQViolations(container);
+
+                html += `
+                    <div class="container-box ${statusClass}" onmousedown="handleContainerMouseDown(event, ${index})" onmouseup="handleContainerMouseUp(event, ${index})">
+                        <div class="container-header">
+                            <div class="container-name">${container.container_name || 'Unknown'}</div>
+                            <div class="container-id">${container.container_id || 'N/A'}</div>
+                            <div class="expand-icon" onclick="toggleContainerDetail(${index})" title="Click to expand/collapse">
+                                <span id="icon-${index}">▼</span>
+                            </div>
+                        </div>
+                        <div class="container-stats">
+                            <div><strong>Status:</strong> ${status.text}</div>
+                            <div><strong>CPUs:</strong> ${container.container_cpus_formatted || 'N/A'}</div>
+                            <div><strong>PCI Devices:</strong> ${container.pci_devices ? container.pci_devices.length : 0}</div>
+                            <div><strong>IRQ Violations:</strong> ${irqViolations.totalViolations}</div>
+                        </div>
+                        <div id="detail-${index}" class="container-detail">
+                            ${generateContainerDetail(container, issues, irqViolations)}
+                        </div>
+                    </div>
+                `;
+            });
+
+            html += '</div>';
+            containerElement.innerHTML = html;
+
+            // Add search functionality
+            document.getElementById('containerSearch').addEventListener('input', function(e) {
+                const searchTerm = e.target.value.toLowerCase();
+                const containerBoxes = document.querySelectorAll('.container-box');
+                
+                containerBoxes.forEach(box => {
+                    const containerName = box.querySelector('.container-name').textContent.toLowerCase();
+                    const containerId = box.querySelector('.container-id').textContent.toLowerCase();
+                    
+                    if (containerName.includes(searchTerm) || containerId.includes(searchTerm)) {
+                        box.style.display = 'block';
+                    } else {
+                        box.style.display = 'none';
+                    }
+                });
+            });
+        }
+
+        // Get container status including IRQ violations
+        function getContainerStatus(container) {
+            let issues = getContainerIssues(container);
+            let irqViolations = getContainerIRQViolations(container);
+            
+            // Check for IRQ violations
+            if (irqViolations.totalViolations > 0) {
+                if (irqViolations.highPriorityViolations > 0) {
+                    return { class: 'status-error', text: 'IRQ Violations' };
+                } else {
+                    return { class: 'status-warning', text: 'IRQ Warnings' };
+                }
+            }
+            
+            if (issues.length === 0) {
+                return { class: 'status-good', text: 'Good' };
+            } else if (issues.some(issue => issue.severity === 'error')) {
+                return { class: 'status-error', text: 'Error' };
+            } else {
+                return { class: 'status-warning', text: 'Warning' };
+            }
+        }
+
+        // Get container IRQ violations
+        function getContainerIRQViolations(container) {
+            let totalViolations = 0;
+            let highPriorityViolations = 0;
+            let violationsByCPU = {};
+
+            if (!analysisData.irq_violation_analysis?.violations || !container.container_cpus) {
+                return { totalViolations: 0, highPriorityViolations: 0, violationsByCPU: {} };
+            }
+
+            // Check each CPU assigned to this container
+            container.container_cpus.forEach(cpu => {
+                const cpuStr = cpu.toString();
+                
+                if (analysisData.irq_violation_analysis.violations[cpuStr]) {
+                    const cpuViolations = analysisData.irq_violation_analysis.violations[cpuStr];
+                    
+                    if (cpuViolations.violations && cpuViolations.violations.length > 0) {
+                        violationsByCPU[cpu] = cpuViolations;
+                        totalViolations += cpuViolations.violations.length;
+                        
+                        // Count high priority violations (those with significant interrupt rates)
+                        if (cpuViolations.violation_details) {
+                            cpuViolations.violation_details.forEach(detail => {
+                                if (detail.interrupts_per_hour > 1.0) {
+                                    highPriorityViolations++;
+                                }
+                            });
+                        }
+                    }
+                }
+            });
+
+            return { totalViolations, highPriorityViolations, violationsByCPU };
+        }
+
+        // Get container issues
+        function getContainerIssues(container) {
+            let issues = [];
+
+            // Check NUMA alignment
+            if (container.numa_alignment) {
+                if (container.numa_alignment.alignment_status === 'MISALIGNED') {
+                    issues.push({
+                        type: 'NUMA Misalignment',
+                        severity: 'warning',
+                        description: 'Container CPUs and PCI devices are not on the same NUMA node'
+                    });
+                }
+                
+                // Check for PCI device errors
+                if (container.numa_alignment.pci_numa_info) {
+                    Object.values(container.numa_alignment.pci_numa_info).forEach(pci => {
+                        if (pci.error) {
+                            issues.push({
+                                type: 'PCI Device Error',
+                                severity: 'error',
+                                description: pci.error
+                            });
+                        }
+                    });
+                }
+            }
+
+            // Check network namespace validation
+            if (container.netns_validation) {
+                Object.entries(container.netns_validation).forEach(([device, validation]) => {
+                    if (validation.error) {
+                        issues.push({
+                            type: 'Network Namespace Error',
+                            severity: 'error',
+                            description: `${device}: ${validation.error}`
+                        });
+                    }
+                });
+            }
+
+            return issues;
+        }
+
+        // Generate detailed container information
+        function generateContainerDetail(container, issues, irqViolations) {
+            let html = `
+                <h4>Container Details</h4>
+                <div style="margin: 15px 0;">
+                    <strong>Full ID:</strong> <span class="text-mono text-small" style="word-break: break-all; line-height: 1.4;">${container.full_container_id || 'N/A'}</span><br>
+                    <strong>Isolated:</strong> ${container.is_isolated ? 'Yes' : 'No'}<br>
+                    <strong>Network Namespace:</strong> <span class="text-mono text-small">${container.network_namespace || 'N/A'}</span>
+                </div>
+            `;
+
+            if (container.pci_devices && container.pci_devices.length > 0) {
+                const pciStatus = getPCIStatus(container);
+                html += `
+                    <h5>PCI Devices</h5>
+                    <div style="margin: 10px 0; padding: 15px; background: ${pciStatus.bgColor}; border-radius: 5px; border-left: 4px solid ${pciStatus.borderColor};">
+                        ${generatePCIDeviceList(container)}
+                    </div>
+                `;
+            }
+
+            if (container.numa_alignment) {
+                const numaStatus = getNUMAStatus(container);
+                html += `
+                    <h5>NUMA Alignment</h5>
+                    <div style="margin: 10px 0; padding: 15px; background: ${numaStatus.bgColor}; border-radius: 5px; border-left: 4px solid ${numaStatus.borderColor};">
+                        <strong>Status:</strong> <span class="${numaStatus.statusClass}">${container.numa_alignment.alignment_status}</span><br>
+                        <strong>Container NUMA Nodes:</strong> ${container.numa_alignment.container_numa_nodes ? container.numa_alignment.container_numa_nodes.join(', ') : 'N/A'}
+                    </div>
+                `;
+            }
+
+            // Add IRQ Violations Summary
+            if (irqViolations.totalViolations > 0) {
+                html += `
+                    <h5>IRQ Violations Summary</h5>
+                    <div style="margin: 10px 0; padding: 10px; background: ${irqViolations.highPriorityViolations > 0 ? '#fed7d7' : '#faf089'}; border-radius: 5px;">
+                        <div><strong>Total Violations:</strong> ${irqViolations.totalViolations}</div>
+                        <div><strong>High Priority Violations:</strong> ${irqViolations.highPriorityViolations}</div>
+                        <div><strong>Affected CPUs:</strong> ${Object.keys(irqViolations.violationsByCPU).length}</div>
+                        <div style="margin-top: 10px; display: flex; gap: 10px; flex-wrap: wrap;">
+                            <button onclick="toggleIRQDetails('${container.container_id || 'unknown'}', event)" 
+                                    style="padding: 8px 15px; background: #667eea; color: white; border: none; border-radius: 4px; cursor: pointer; flex: 1; min-width: 150px;">
+                                Show CPU IRQ Details
+                            </button>
+                            <button onclick="showContainerGraphs('${container.container_id || 'unknown'}', '${container.container_name || 'Unknown'}', event)" 
+                                    style="padding: 8px 15px; background: #38a169; color: white; border: none; border-radius: 4px; cursor: pointer; flex: 1; min-width: 150px;">
+                                Show Container IRQ Graphs
+                            </button>
+                        </div>
+                        <div id="irq-details-${container.container_id || 'unknown'}" style="display: none; margin-top: 15px;">
+                            ${generateIRQDetails(irqViolations.violationsByCPU)}
+                        </div>
+                    </div>
+                `;
+            }
+
+            // Add LLC Alignment if available (check both numa and llc analysis containers)
+            const llcContainer = findLLCContainer(container);
+            if (llcContainer?.llc_alignment) {
+                const llcStatus = getLLCStatus(llcContainer);
+                html += `
+                    <h5>LLC Alignment</h5>
+                    <div style="margin: 10px 0; padding: 15px; background: ${llcStatus.bgColor}; border-radius: 5px; border-left: 4px solid ${llcStatus.borderColor};">
+                        <strong>Status:</strong> <span class="${llcStatus.statusClass}">${llcContainer.llc_alignment.alignment_status || 'Unknown'}</span><br>
+                        <strong>Container LLC Nodes:</strong> <span class="${llcStatus.statusClass}">${llcContainer.llc_alignment.container_llc_nodes ? llcContainer.llc_alignment.container_llc_nodes.join(', ') : 'N/A'}</span>
+                    </div>
+                `;
+            }
+
+            if (issues.length > 0) {
+                html += `
+                    <h5>Other Issues Found</h5>
+                    <div style="margin: 10px 0;">
+                        ${issues.map(issue => `
+                            <div style="margin: 5px 0; padding: 8px; background: ${issue.severity === 'error' ? '#fed7d7' : '#faf089'}; border-radius: 4px; font-size: 0.9em;">
+                                <strong>${issue.type}:</strong> ${issue.description}
+                            </div>
+                        `).join('')}
+                    </div>
+                `;
+            }
+
+            return html;
+        }
+
+        // Get worst IRQ status for a CPU
+        function getWorstIRQStatus(violationDetails) {
+            let hasRed = false;
+            let hasYellow = false;
+            
+            violationDetails.forEach(detail => {
+                if (detail.color_name === 'red') {
+                    hasRed = true;
+                } else if (detail.color_name === 'yellow') {
+                    hasYellow = true;
+                }
+            });
+            
+            if (hasRed) return 'red';
+            if (hasYellow) return 'yellow';
+            return 'green';
+        }
+
+        // Generate IRQ violation details for each CPU
+        function generateIRQDetails(violationsByCPU) {
+            let html = '<div style="font-family: monospace; font-size: 0.85em; background: #f8fafc; padding: 15px; border-radius: 5px; max-height: 400px; overflow-y: auto;">';
+            
+            Object.entries(violationsByCPU).sort(([a], [b]) => parseInt(a) - parseInt(b)).forEach(([cpu, violations]) => {
+                html += `
+                    <div style="margin-bottom: 20px; border-bottom: 1px solid #e2e8f0; padding-bottom: 15px;">
+                        <h6 style="color: #2d3748; margin-bottom: 10px;">CPU ${cpu} (${violations.violations.length} violations):</h6>
+                `;
+                
+                if (violations.violation_details && violations.violation_details.length > 0) {
+                    // Determine the worst status for this CPU
+                    const worstStatus = getWorstIRQStatus(violations.violation_details);
+                    const statusClass = worstStatus === 'red' ? 'status-error' : 
+                                       worstStatus === 'yellow' ? 'status-warning' : 'status-good';
+                    html += `<div style="margin-left: 10px;" class="${statusClass}">IRQs with improper affinity:</div>`;
+                    violations.violation_details.forEach(detail => {
+                        const colorClass = detail.color_name === 'red' ? 'status-error' : 
+                                          detail.color_name === 'yellow' ? 'status-warning' : 'status-good';
+                        html += `
+                            <div style="margin-left: 20px; padding: 2px 0;" class="${colorClass}">
+                                IRQ ${detail.irq}: 
+                                ${detail.interrupt_count.toLocaleString()} interrupts 
+                                (${detail.interrupts_per_hour.toFixed(1)}/hr) - 
+                                ${detail.device_info}
+                            </div>
+                        `;
+                    });
+                }
+                
+                html += '</div>';
+            });
+            
+            html += '</div>';
+            return html;
+        }
+
+        // Get NUMA status for color coding
+        function getNUMAStatus(container) {
+            if (!container.numa_alignment) {
+                return { 
+                    statusClass: 'status-warning', 
+                    bgColor: '#faf089', 
+                    borderColor: '#d69e2e' 
+                };
+            }
+            
+            const hasErrors = container.numa_alignment.pci_numa_info && 
+                             Object.values(container.numa_alignment.pci_numa_info).some(pci => pci.error);
+            
+            if (hasErrors) {
+                return { 
+                    statusClass: 'status-error', 
+                    bgColor: '#fed7d7', 
+                    borderColor: '#e53e3e' 
+                };
+            } else if (container.numa_alignment.alignment_status?.toLowerCase() === 'aligned') {
+                return { 
+                    statusClass: 'status-good', 
+                    bgColor: '#f0fff4', 
+                    borderColor: '#38a169' 
+                };
+            } else {
+                return { 
+                    statusClass: 'status-warning', 
+                    bgColor: '#faf089', 
+                    borderColor: '#d69e2e' 
+                };
+            }
+        }
+
+        // Get PCI status for color coding
+        function getPCIStatus(container) {
+            if (!container.pci_devices || container.pci_devices.length === 0) {
+                return { 
+                    bgColor: '#f8fafc', 
+                    borderColor: '#e2e8f0' 
+                };
+            }
+            
+            // Check for network namespace validation errors
+            const hasNetNsErrors = container.netns_validation && 
+                                  Object.values(container.netns_validation).some(validation => validation.error);
+            
+            // Check for PCI NUMA info errors
+            const hasPciErrors = container.numa_alignment?.pci_numa_info && 
+                                Object.values(container.numa_alignment.pci_numa_info).some(pci => pci.error);
+            
+            if (hasNetNsErrors || hasPciErrors) {
+                return { 
+                    bgColor: '#fed7d7', 
+                    borderColor: '#e53e3e' 
+                };
+            } else {
+                return { 
+                    bgColor: '#f0fff4', 
+                    borderColor: '#38a169' 
+                };
+            }
+        }
+
+        // Generate PCI device list with NUMA information
+        function generatePCIDeviceList(container) {
+            if (!container.pci_devices || container.pci_devices.length === 0) {
+                return '<div>No PCI devices assigned</div>';
+            }
+            
+            let html = '';
+            container.pci_devices.forEach(device => {
+                // Get NUMA node for this PCI device
+                let numaNode = 'N/A';
+                let hasError = false;
+                let errorMsg = '';
+                let numaAlignmentStatus = 'unknown';
+                
+                if (container.numa_alignment?.pci_numa_info?.[device]) {
+                    const pciInfo = container.numa_alignment.pci_numa_info[device];
+                    if (pciInfo.error) {
+                        hasError = true;
+                        errorMsg = pciInfo.error;
+                        numaAlignmentStatus = 'error';
+                    } else if (pciInfo.numa_node !== undefined) {
+                        numaNode = pciInfo.numa_node;
+                        
+                        // Check if PCI device is on same NUMA node as container CPUs
+                        if (container.numa_alignment.container_numa_nodes?.includes(pciInfo.numa_node)) {
+                            numaAlignmentStatus = 'aligned';
+                        } else {
+                            numaAlignmentStatus = 'misaligned';
+                        }
+                    }
+                }
+                
+                // Check network namespace validation
+                let netNsStatus = '';
+                if (container.netns_validation?.[device]) {
+                    const validation = container.netns_validation[device];
+                    if (validation.error) {
+                        netNsStatus = ` <span class="status-error">(NetNS Error: ${validation.error})</span>`;
+                    } else if (validation.found_in_netns) {
+                        netNsStatus = ' <span class="status-good">(NetNS: OK)</span>';
+                    }
+                }
+                
+                // Get NUMA status color
+                const numaStatusClass = numaAlignmentStatus === 'aligned' ? 'status-good' : 
+                                       numaAlignmentStatus === 'misaligned' ? 'status-warning' : 
+                                       numaAlignmentStatus === 'error' ? 'status-error' : '';
+
+                html += `
+                    <div style="margin: 8px 0; padding: 8px; background: rgba(255,255,255,0.7); border-radius: 4px;">
+                        <span class="pci-device">${device}</span>
+                        <span style="margin-left: 10px; font-size: 0.9em;">
+                            <span class="${numaStatusClass}">NUMA Node:</span> <strong>${numaNode}</strong>
+                        </span>
+                        ${netNsStatus}
+                        ${hasError ? `<div style="color: #e53e3e; font-size: 0.8em; margin-top: 4px;">Error: ${errorMsg}</div>` : ''}
+                    </div>
+                `;
+            });
+            
+            return html;
+        }
+
+        // Find LLC container data from LLC analysis
+        function findLLCContainer(container) {
+            if (!analysisData.llc_alignment_analysis?.containers) {
+                return null;
+            }
+            
+            return analysisData.llc_alignment_analysis.containers.find(llcContainer => 
+                llcContainer.container_id === container.container_id ||
+                llcContainer.container_name === container.container_name
+            );
+        }
+
+        // Get LLC status for color coding
+        function getLLCStatus(container) {
+            if (!container.llc_alignment) {
+                return { 
+                    statusClass: 'status-warning', 
+                    bgColor: '#f8fafc', 
+                    borderColor: '#e2e8f0' 
+                };
+            }
+            
+            const status = container.llc_alignment.alignment_status?.toLowerCase();
+            if (status === 'aligned') {
+                return { 
+                    statusClass: 'status-good', 
+                    bgColor: '#f0fff4', 
+                    borderColor: '#38a169' 
+                };
+            } else if (status === 'misaligned') {
+                return { 
+                    statusClass: 'status-warning', 
+                    bgColor: '#faf089', 
+                    borderColor: '#d69e2e' 
+                };
+            } else {
+                return { 
+                    statusClass: 'status-warning', 
+                    bgColor: '#f8fafc', 
+                    borderColor: '#e2e8f0' 
+                };
+            }
+        }
+
+        // Toggle IRQ details visibility
+        function toggleIRQDetails(containerId, event) {
+            if (event) {
+                event.stopPropagation();
+            }
+            const details = document.getElementById(`irq-details-${containerId}`);
+            const button = event.target;
+            if (details.style.display === 'none') {
+                details.style.display = 'block';
+                button.textContent = 'Hide CPU IRQ Details';
+            } else {
+                details.style.display = 'none';
+                button.textContent = 'Show CPU IRQ Details';
+            }
+        }
+
+        // Variables to track mouse interactions
+        let mouseDownTime = 0;
+        let mouseDownPosition = { x: 0, y: 0 };
+        let isDragging = false;
+
+        // Handle mouse down on container
+        function handleContainerMouseDown(event, index) {
+            // Don't trigger on buttons or links
+            if (event.target.tagName === 'BUTTON' || event.target.closest('button') || 
+                event.target.classList.contains('expand-icon') || event.target.closest('.expand-icon')) {
+                return;
+            }
+
+            mouseDownTime = Date.now();
+            mouseDownPosition = { x: event.clientX, y: event.clientY };
+            isDragging = false;
+        }
+
+        // Handle mouse up on container
+        function handleContainerMouseUp(event, index) {
+            // Don't trigger on buttons or links
+            if (event.target.tagName === 'BUTTON' || event.target.closest('button') || 
+                event.target.classList.contains('expand-icon') || event.target.closest('.expand-icon')) {
+                return;
+            }
+
+            const clickDuration = Date.now() - mouseDownTime;
+            const distance = Math.sqrt(
+                Math.pow(event.clientX - mouseDownPosition.x, 2) + 
+                Math.pow(event.clientY - mouseDownPosition.y, 2)
+            );
+
+            // Check if text is selected
+            const selection = window.getSelection();
+            const hasTextSelection = selection && selection.toString().length > 0;
+
+            // Don't toggle if:
+            // 1. User has selected text
+            // 2. Mouse moved more than 5 pixels (likely dragging)
+            // 3. Click was held for more than 300ms (likely selecting text)
+            if (hasTextSelection || distance > 5 || clickDuration > 300) {
+                return;
+            }
+
+            // Only toggle on quick, short clicks without text selection
+            toggleContainerDetail(index);
+        }
+
+        // Toggle container detail expansion
+        function toggleContainerDetail(index) {
+            const detail = document.getElementById(`detail-${index}`);
+            const icon = document.getElementById(`icon-${index}`);
+            const expandIcon = icon.parentElement;
+            
+            detail.classList.toggle('expanded');
+            expandIcon.classList.toggle('expanded');
+            
+            // Update icon text
+            if (detail.classList.contains('expanded')) {
+                icon.textContent = '▲';
+            } else {
+                icon.textContent = '▼';
+            }
+        }
+
+        // Load topology data
+        function loadTopologyData() {
+            const topologyElement = document.getElementById('topologyContent');
+            
+            if (!analysisData) {
+                topologyElement.innerHTML = '<div class="error">No topology data available</div>';
+                return;
+            }
+
+            let html = '';
+
+            // Check for NUMA topology
+            if (analysisData.numa_alignment_analysis?.numa_topology) {
+                const numaTopology = analysisData.numa_alignment_analysis.numa_topology;
+                const containers = analysisData.numa_alignment_analysis.containers || [];
+                
+                html += '<h3>NUMA Topology</h3><div class="numa-topology">';
+                
+                Object.entries(numaTopology).forEach(([nodeId, nodeData]) => {
+                    html += `
+                        <div class="numa-node">
+                            <div class="numa-node-header">NUMA Node ${nodeId}</div>
+                            <div class="cpu-list">CPUs: ${nodeData.cpus ? formatCpuList(nodeData.cpus) : 'N/A'}</div>
+                    `;
+
+                    // Add LLC information if available
+                    if (analysisData.llc_alignment_analysis?.llc_topology) {
+                        const llcTopology = analysisData.llc_alignment_analysis.llc_topology;
+                        const nodeLLCs = Object.entries(llcTopology).filter(([llcId, llcData]) => {
+                            return llcData.cpus && nodeData.cpus && 
+                                   llcData.cpus.some(cpu => nodeData.cpus.includes(cpu));
+                        });
+
+                        if (nodeLLCs.length > 0) {
+                            html += '<div class="llc-container">';
+                            nodeLLCs.forEach(([llcId, llcData]) => {
+                                // Filter CPUs that belong to this NUMA node
+                                const llcCpusInNode = llcData.cpus.filter(cpu => nodeData.cpus.includes(cpu));
+                                
+                                html += `
+                                    <div class="llc-node">
+                                        <div class="llc-header">LLC ${llcId}</div>
+                                        <div class="cpu-list">CPUs: ${formatCpuList(llcCpusInNode)}</div>
+                                `;
+
+                                // Add containers in this LLC
+                                const containersInLLC = containers.filter(container => {
+                                    return container.container_cpus && 
+                                           container.container_cpus.some(cpu => llcCpusInNode.includes(cpu));
+                                });
+
+                                if (containersInLLC.length > 0) {
+                                    html += '<div style="margin-top: 10px;"><strong>Containers:</strong><br>';
+                                    containersInLLC.forEach(container => {
+                                        html += `<div class="container-in-llc">${container.container_name || container.container_id}</div>`;
+                                    });
+                                    html += '</div>';
+                                }
+
+                                // Add PCI devices in this NUMA node
+                                const pciInNode = [];
+                                containers.forEach(container => {
+                                    if (container.numa_alignment?.container_numa_nodes?.includes(parseInt(nodeId))) {
+                                        if (container.pci_devices) {
+                                            pciInNode.push(...container.pci_devices);
+                                        }
+                                    }
+                                });
+
+                                if (pciInNode.length > 0) {
+                                    const uniquePci = [...new Set(pciInNode)];
+                                    html += '<div style="margin-top: 8px;"><strong>PCI Devices:</strong><br>';
+                                    uniquePci.forEach(device => {
+                                        html += `<div class="pci-device">${device}</div>`;
+                                    });
+                                    html += '</div>';
+                                }
+
+                                html += '</div>';
+                            });
+                            html += '</div>';
+                        }
+                    }
+
+                    html += '</div>';
+                });
+                
+                html += '</div>';
+            } else {
+                html += '<div class="error">NUMA topology information not available</div>';
+            }
+
+            topologyElement.innerHTML = html;
+        }
+
+        // Format CPU list for display
+        function formatCpuList(cpus) {
+            if (!cpus || cpus.length === 0) return 'None';
+            
+            // Sort CPUs
+            const sortedCpus = [...cpus].sort((a, b) => a - b);
+            
+            // Group consecutive CPUs
+            const groups = [];
+            let start = sortedCpus[0];
+            let end = start;
+            
+            for (let i = 1; i < sortedCpus.length; i++) {
+                if (sortedCpus[i] === end + 1) {
+                    end = sortedCpus[i];
+                } else {
+                    groups.push(start === end ? start.toString() : `${start}-${end}`);
+                    start = end = sortedCpus[i];
+                }
+            }
+            groups.push(start === end ? start.toString() : `${start}-${end}`);
+            
+            return groups.join(', ');
+        }
+
+        // Store current charts for cleanup
+        let currentCharts = [];
+
+        // Destroy existing charts
+        function destroyExistingCharts() {
+            currentCharts.forEach(chart => {
+                if (chart && typeof chart.destroy === 'function') {
+                    chart.destroy();
+                }
+            });
+            currentCharts = [];
+        }
+
+        // Load container graphs
+        function loadContainerGraphs(containerId, containerName) {
+            const graphsElement = document.getElementById('graphsContent');
+            
+            // Destroy existing charts first
+            destroyExistingCharts();
+            
+            if (!analysisData || !analysisData.irq_violation_analysis?.violations) {
+                graphsElement.innerHTML = '<div class="error">No IRQ violation data available</div>';
+                return;
+            }
+            
+            // Debug container lookup
+            console.log('=== Container Lookup ===');
+            console.log('Looking for ID:', containerId, 'Name:', containerName);
+            
+            // Find container data - PRIORITIZE EXACT ID MATCH
+            let container = analysisData.numa_alignment_analysis?.containers?.find(c => c.container_id === containerId);
+            
+            // If not found in NUMA analysis, try LLC analysis
+            if (!container && analysisData.llc_alignment_analysis?.containers) {
+                container = analysisData.llc_alignment_analysis.containers.find(c => c.container_id === containerId);
+            }
+            
+            if (!container) {
+                graphsElement.innerHTML = `<div class="error">Container data not found for ID: ${containerId}, Name: ${containerName}</div>`;
+                return;
+            }
+            
+            console.log('Found container:', container.container_id, 'CPUs:', container.container_cpus_formatted);
+            
+            const irqViolations = getContainerIRQViolations(container);
+            console.log('IRQ violations:', irqViolations.totalViolations, 'across', Object.keys(irqViolations.violationsByCPU).length, 'CPUs');
+            
+            if (irqViolations.totalViolations === 0) {
+                graphsElement.innerHTML = `
+                    <div class="container-info-banner">
+                        <h3>${containerName}</h3>
+                        <p><strong>Container ID:</strong> ${containerId}</p>
+                        <p><strong>CPUs:</strong> ${container.container_cpus_formatted || 'N/A'}</p>
+                        <p>No IRQ violations found for this container.</p>
+                    </div>
+                `;
+                return;
+            }
+            
+            // Force regenerate unique IDs for charts to avoid conflicts
+            const timestamp = Date.now();
+            const containerChartId = `containerChart_${timestamp}`;
+            const cpuChartsGridId = `cpuChartsGrid_${timestamp}`;
+            
+            // Generate container info and charts
+            let html = `
+                <div class="container-info-banner">
+                    <h3>${containerName}</h3>
+                    <p><strong>Container ID:</strong> ${containerId}</p>
+                    <p><strong>CPUs:</strong> ${container.container_cpus_formatted || 'N/A'}</p>
+                    <p><strong>Total IRQ Violations:</strong> ${irqViolations.totalViolations.toLocaleString()}</p>
+                    <p><strong>Affected CPUs:</strong> ${Object.keys(irqViolations.violationsByCPU).length}</p>
+                </div>
+                
+                <div class="chart-container">
+                    <div class="chart-title">Container-wide Top IRQ Offenders</div>
+                    <div class="chart-canvas">
+                        <canvas id="${containerChartId}"></canvas>
+                    </div>
+                </div>
+                
+                <div class="cpu-charts-grid" id="${cpuChartsGridId}">
+                    <!-- CPU charts will be generated here -->
+                </div>
+            `;
+            
+            graphsElement.innerHTML = html;
+            
+            // Generate charts with proper cleanup tracking
+            setTimeout(() => {
+                generateContainerChart(irqViolations, containerChartId);
+                generateCPUCharts(irqViolations, cpuChartsGridId, timestamp);
+            }, 100);
+        }
+
+        // Generate container-wide IRQ chart
+        function generateContainerChart(irqViolations, chartId = 'containerChart') {
+            const irqTotals = {};
+            
+            // Aggregate IRQ data across all CPUs
+            Object.values(irqViolations.violationsByCPU).forEach(cpuData => {
+                if (cpuData.violation_details) {
+                    cpuData.violation_details.forEach(detail => {
+                        if (!irqTotals[detail.irq]) {
+                            irqTotals[detail.irq] = {
+                                irq: detail.irq,
+                                totalRate: 0,
+                                deviceInfo: detail.device_info,
+                                maxRate: 0
+                            };
+                        }
+                        irqTotals[detail.irq].totalRate += detail.interrupts_per_hour;
+                        irqTotals[detail.irq].maxRate = Math.max(irqTotals[detail.irq].maxRate, detail.interrupts_per_hour);
+                    });
+                }
+            });
+            
+            // Sort by total rate and take top 20
+            const sortedIRQs = Object.values(irqTotals)
+                .sort((a, b) => b.totalRate - a.totalRate)
+                .slice(0, 20);
+            
+            const ctx = document.getElementById(chartId).getContext('2d');
+            const containerChart = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: sortedIRQs.map(irq => `IRQ ${irq.irq} (${irq.deviceInfo})`),
+                    datasets: [{
+                        label: 'Total Interrupt Rate (per hour)',
+                        data: sortedIRQs.map(irq => irq.totalRate),
+                        backgroundColor: sortedIRQs.map(irq => 
+                            irq.maxRate >= 1000 ? '#e53e3e' : 
+                            irq.maxRate > 0 ? '#d69e2e' : '#38a169'
+                        ),
+                        borderColor: '#2d3748',
+                        borderWidth: 1
+                    }]
+                },
+                options: {
+                    indexAxis: 'y',
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            display: false
+                        },
+                        tooltip: {
+                            callbacks: {
+                                label: function(context) {
+                                    const irq = sortedIRQs[context.dataIndex];
+                                    return [
+                                        `Total Rate: ${irq.totalRate.toFixed(1)}/hr`,
+                                        `Max Rate: ${irq.maxRate.toFixed(1)}/hr`,
+                                        `Device: ${irq.deviceInfo}`
+                                    ];
+                                }
+                            }
+                        }
+                    },
+                    scales: {
+                        x: {
+                            beginAtZero: true,
+                            title: {
+                                display: true,
+                                text: 'Interrupt Rate (per hour)'
+                            }
+                        },
+                        y: {
+                            title: {
+                                display: true,
+                                text: 'IRQ Numbers'
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
+        // Generate per-CPU IRQ charts
+        function generateCPUCharts(irqViolations, gridId = 'cpuChartsGrid', timestamp = Date.now()) {
+            const cpuChartsGrid = document.getElementById(gridId);
+            let html = '';
+            
+            // Sort CPUs numerically
+            const sortedCPUs = Object.keys(irqViolations.violationsByCPU).sort((a, b) => parseInt(a) - parseInt(b));
+            
+            sortedCPUs.forEach(cpu => {
+                const cpuData = irqViolations.violationsByCPU[cpu];
+                
+                const cpuChartId = `cpuChart_${cpu}_${timestamp}`;
+                html += `
+                    <div class="cpu-chart-container">
+                        <div class="cpu-chart-title">CPU ${cpu} - Top IRQ Offenders</div>
+                        <div class="cpu-chart-canvas">
+                            <canvas id="${cpuChartId}"></canvas>
+                        </div>
+                    </div>
+                `;
+            });
+            
+            cpuChartsGrid.innerHTML = html;
+            
+            // Generate individual CPU charts
+            setTimeout(() => {
+                sortedCPUs.forEach(cpu => {
+                    const cpuData = irqViolations.violationsByCPU[cpu];
+                    const cpuChartId = `cpuChart_${cpu}_${timestamp}`;
+                    
+                    // Sort violations by rate and take top 15
+                    const sortedViolations = cpuData.violation_details
+                        .sort((a, b) => b.interrupts_per_hour - a.interrupts_per_hour)
+                        .slice(0, 15);
+                    
+                    const ctx = document.getElementById(cpuChartId).getContext('2d');
+                    const cpuChart = new Chart(ctx, {
+                        type: 'bar',
+                        data: {
+                            labels: sortedViolations.map(v => `IRQ ${v.irq}`),
+                            datasets: [{
+                                label: 'Interrupt Rate (per hour)',
+                                data: sortedViolations.map(v => v.interrupts_per_hour),
+                                backgroundColor: sortedViolations.map(v => 
+                                    v.interrupts_per_hour >= 1000 ? '#e53e3e' : 
+                                    v.interrupts_per_hour > 0 ? '#d69e2e' : '#38a169'
+                                ),
+                                borderColor: '#2d3748',
+                                borderWidth: 1
+                            }]
+                        },
+                        options: {
+                            indexAxis: 'y',
+                            responsive: true,
+                            maintainAspectRatio: false,
+                            plugins: {
+                                legend: {
+                                    display: false
+                                },
+                                tooltip: {
+                                    callbacks: {
+                                        label: function(context) {
+                                            const violation = sortedViolations[context.dataIndex];
+                                            return [
+                                                `Rate: ${violation.interrupts_per_hour.toFixed(1)}/hr`,
+                                                `Count: ${violation.interrupt_count.toLocaleString()}`,
+                                                `Device: ${violation.device_info}`
+                                            ];
+                                        }
+                                    }
+                                }
+                            },
+                            scales: {
+                                x: {
+                                    beginAtZero: true,
+                                    title: {
+                                        display: true,
+                                        text: 'Interrupt Rate (per hour)'
+                                    }
+                                },
+                                y: {
+                                    title: {
+                                        display: true,
+                                        text: 'IRQ Numbers'
+                                    }
+                                }
+                            }
+                        }
+                    });
+                    
+                    // Track the chart for cleanup
+                    currentCharts.push(cpuChart);
+                });
+            }, 200);
+        }
+
+        // Show error message
+        function showError(message) {
+            const errorHtml = `<div class="error">${message}</div>`;
+            document.getElementById('summaryContent').innerHTML = errorHtml;
+            document.getElementById('containerContent').innerHTML = errorHtml;
+            document.getElementById('topologyContent').innerHTML = errorHtml;
+        }
+    </script>
+</body>
+</html>
