@@ -21,6 +21,7 @@ A high-performance tool for analyzing and configuring IRQ affinity in containeri
     - [4. NUMA Alignment Analysis](#4-numa-alignment-analysis)
     - [5. LLC Alignment Analysis](#5-llc-alignment-analysis)
     - [6. JSON Output for Automation](#6-json-output-for-automation)
+    - [7. Web Interface Viewer](#7-web-interface-viewer)
 - [Output Interpretation](#output-interpretation)
   - [JSON Output Format](#json-output-format)
   - [IRQ Violation Analysis](#irq-violation-analysis)
@@ -183,6 +184,29 @@ sudo ./ContainerIRQTool.sh --check-violations --full-analysis
 # Extract violation count for monitoring
 ./ContainerIRQTool.sh --local /path/to/sosreport --check-violations --output-format json | jq '.irq_violation_analysis.total_violations'
 ```
+
+#### 7. Web Interface Viewer
+For large datasets with hundreds of CPUs and containers, use the interactive web viewer:
+
+```bash
+# Generate JSON output for web viewer
+./ContainerIRQTool.sh --local /path/to/sosreport --check-violations --check-numa-alignment --check-llc-alignment --output-format json > analysis.json
+
+# Start web server
+python3 -m http.server 8000
+
+# Open browser to: http://localhost:8000/container_analyzer_viewer.html
+# Upload your analysis.json file
+```
+
+The web viewer provides:
+- **Summary dashboard** with system overview and recommendations
+- **Interactive container analysis** with expandable details and search
+- **NUMA topology visualization** with nested diagrams  
+- **IRQ violation graphs** with per-container and per-CPU breakdowns
+- **Color-coded sections** for immediate issue identification
+
+For detailed viewer documentation, see [Docs/WEB_VIEWER.md](./Docs/WEB_VIEWER.md).
 
 ## Output Interpretation
 
