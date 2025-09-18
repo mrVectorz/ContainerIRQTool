@@ -4,6 +4,8 @@ LLC Alignment Analyzer for Container IRQ Tool
 
 This script analyzes LLC (Last Level Cache) alignment between isolated containers and their CPUs.
 It checks for proper alignment to ensure optimal performance in OpenShift/Kubernetes environments.
+
+OPTIMIZED: Now uses shared_data module for efficient data access.
 """
 
 import os
@@ -14,76 +16,17 @@ import glob
 import re
 import subprocess
 
-def parse_cpu_range(cpu_range_str):
-    """Parse CPU range string (e.g., '0-3,8-11,16') into list of CPU numbers."""
-    if not cpu_range_str or cpu_range_str in ('null', 'empty', ''):
-        return []
-    
-    cpus = []
-    for part in cpu_range_str.split(','):
-        part = part.strip()
-        if '-' in part:
-            start, end = map(int, part.split('-'))
-            cpus.extend(range(start, end + 1))
-        elif part.isdigit():
-            cpus.append(int(part))
-    return cpus
+# Import shared data module for efficient data access
+try:
+    import shared_data
+except ImportError:
+    print("Error: shared_data module not found. Please ensure shared_data.py is in the same directory.", file=sys.stderr)
+    sys.exit(1)
 
-def format_cpu_list_range(cpu_list):
-    """Format a list of CPU numbers into range format with step detection."""
-    if not cpu_list:
-        return ""
-    
-    cpu_list = sorted(cpu_list)
-    if len(cpu_list) == 1:
-        return str(cpu_list[0])
-    
-    ranges = []
-    i = 0
-    
-    while i < len(cpu_list):
-        start = cpu_list[i]
-        end = start
-        step = 1
-        
-        # Look ahead to find consecutive numbers or patterns
-        if i + 1 < len(cpu_list):
-            # Check if we have a step pattern (like even/odd cores)
-            if i + 2 < len(cpu_list):
-                potential_step = cpu_list[i + 1] - cpu_list[i]
-                if cpu_list[i + 2] - cpu_list[i + 1] == potential_step:
-                    step = potential_step
-        
-        # Find the end of this sequence
-        while i + 1 < len(cpu_list) and cpu_list[i + 1] == cpu_list[i] + step:
-            i += 1
-            end = cpu_list[i]
-        
-        # Format the range
-        if start == end:
-            ranges.append(str(start))
-        elif step == 1:
-            # Consecutive range
-            ranges.append(f"{start}-{end}")
-        else:
-            # Step range - show pattern more clearly
-            if end - start >= step * 3:  # Only show step notation for longer sequences
-                if step == 2 and start % 2 == 0:
-                    # Special case for even cores
-                    ranges.append(f"{start}-{end}:2 (even)")
-                elif step == 2 and start % 2 == 1:
-                    # Special case for odd cores
-                    ranges.append(f"{start}-{end}:2 (odd)")
-                else:
-                    ranges.append(f"{start}-{end}:{step}")
-            else:
-                # For short step sequences, just list them
-                sequence = list(range(start, end + 1, step))
-                ranges.append(",".join(map(str, sequence)))
-        
-        i += 1
-    
-    return ",".join(ranges)
+# Use shared_data functions instead of duplicating code
+parse_cpu_range = shared_data.parse_cpu_range
+format_cpu_list_range = shared_data.format_cpu_list_range
+extract_pci_devices_from_container = shared_data.extract_pci_devices_from_container
 
 def get_llc_color_code(alignment_status):
     """Get color code for LLC alignment status."""
@@ -106,72 +49,8 @@ def format_colored_text(text, color_code):
     """Format text with color code."""
     return f"{color_code}{text}\033[0m"
 
-def get_llc_topology(base_dir=None):
-    """Get LLC topology information from the system."""
-    llc_info = {}
-    cpu_to_llc = {}
-    
-    if base_dir:
-        # For sosreport analysis
-        cpu_base = os.path.join(base_dir, "sys", "devices", "system", "cpu")
-    else:
-        # For live system
-        cpu_base = "/sys/devices/system/cpu"
-    
-    if not os.path.isdir(cpu_base):
-        return llc_info, cpu_to_llc
-    
-    try:
-        # Find all CPU directories
-        cpu_dirs = [d for d in os.listdir(cpu_base) 
-                   if d.startswith('cpu') and d[3:].isdigit()]
-        
-        llc_groups = {}  # Map LLC signature to list of CPUs
-        
-        for cpu_dir in cpu_dirs:
-            cpu_num = int(cpu_dir[3:])
-            cpu_path = os.path.join(cpu_base, cpu_dir)
-            
-            # Get LLC shared CPU list (index3 is typically L3/LLC)
-            shared_cpu_file = os.path.join(cpu_path, "cache", "index3", "shared_cpu_list")
-            if os.path.isfile(shared_cpu_file):
-                try:
-                    with open(shared_cpu_file, 'r') as f:
-                        shared_cpu_list = f.read().strip()
-                    
-                    # Parse the shared CPU list
-                    shared_cpus = parse_cpu_range(shared_cpu_list)
-                    
-                    # Use the shared_cpu_list string as a signature for this LLC group
-                    if shared_cpu_list not in llc_groups:
-                        llc_groups[shared_cpu_list] = {
-                            'cpus': set(shared_cpus),
-                            'cpu_list_formatted': format_cpu_list_range(shared_cpus)
-                        }
-                    
-                    # Map this CPU to its LLC group
-                    cpu_to_llc[cpu_num] = shared_cpu_list
-                    
-                except (OSError, ValueError):
-                    continue
-    except OSError:
-        pass
-    
-    # Convert LLC groups to numbered nodes for easier reference
-    llc_node_num = 0
-    for llc_signature, llc_data in llc_groups.items():
-        llc_info[llc_node_num] = {
-            'cpus': sorted(list(llc_data['cpus'])),
-            'cpulist': llc_data['cpu_list_formatted'],
-            'signature': llc_signature
-        }
-        # Update cpu_to_llc mapping to use node numbers
-        for cpu in cpu_to_llc:
-            if cpu_to_llc[cpu] == llc_signature:
-                cpu_to_llc[cpu] = llc_node_num
-        llc_node_num += 1
-    
-    return llc_info, cpu_to_llc
+# Use shared_data.get_llc_topology instead of duplicating the function
+get_llc_topology = shared_data.get_llc_topology
 
 def get_live_container_list():
     """Get list of container IDs from live system using crictl."""
@@ -204,39 +83,7 @@ def get_live_container_data(container_id):
             json.JSONDecodeError, FileNotFoundError):
         return None
 
-def extract_pci_devices_from_container(container_data):
-    """Extract PCI device addresses from container annotations."""
-    pci_devices = []
-    
-    try:
-        # Get environment variables from the container spec
-        env_vars = container_data.get('info', {}).get('runtimeSpec', {}).get('process', {}).get('env', [])
-        
-        for env_var in env_vars:
-            if env_var.startswith('PCIDEVICE_OPENSHIFT') and '_INFO=' in env_var:
-                # Split on first '=' to get the JSON value
-                parts = env_var.split('=', 1)
-                if len(parts) != 2:
-                    continue
-                
-                try:
-                    # Parse the JSON value
-                    pci_info = json.loads(parts[1])
-                    
-                    # Extract device IDs from the nested structure
-                    for device_id, device_data in pci_info.items():
-                        if isinstance(device_data, dict) and 'generic' in device_data:
-                            generic_info = device_data['generic']
-                            if 'deviceID' in generic_info:
-                                pci_devices.append(generic_info['deviceID'])
-                
-                except (json.JSONDecodeError, KeyError, TypeError):
-                    continue
-    
-    except (KeyError, TypeError):
-        pass
-    
-    return pci_devices
+# extract_pci_devices_from_container now imported from shared_data
 
 def check_llc_alignment(container_cpus, llc_topology, cpu_to_llc):
     """Check LLC alignment for container CPUs."""
@@ -295,69 +142,35 @@ def check_llc_alignment(container_cpus, llc_topology, cpu_to_llc):
     
     return alignment_results
 
-def analyze_container_llc_alignment(container_file_or_data, base_dir=None, is_live_data=False):
-    """Analyze LLC alignment for a single container."""
-    if is_live_data:
-        # container_file_or_data is actually container_data for live systems
-        container_data = container_file_or_data
-        container_file_id = container_data.get('status', {}).get('id', 'unknown')
-    else:
-        # container_file_or_data is a file path for sosreport analysis
-        try:
-            with open(container_file_or_data, 'r') as f:
-                container_data = json.load(f)
-            container_file_id = os.path.basename(container_file_or_data)
-        except (json.JSONDecodeError, FileNotFoundError, OSError) as e:
-            return {
-                'error': f"Failed to read container data: {str(e)}",
-                'container_id': os.path.basename(container_file_or_data),
-                'analysis_skipped': True
-            }
-    
-    # Get container metadata
-    container_name = (container_data.get('info', {}).get('config', {}).get('metadata', {}).get('name') or
-                     container_data.get('status', {}).get('metadata', {}).get('name') or
-                     "unknown")
-    
-    container_id = (container_data.get('status', {}).get('id') or
-                   container_data.get('info', {}).get('id') or
-                   container_file_id)
-    
-    # Check for isolation annotations
-    annotations = container_data.get('info', {}).get('runtimeSpec', {}).get('annotations', {})
-    is_isolated = (annotations.get('irq-load-balancing.crio.io') == 'disable' and 
-                   annotations.get('cpu-quota.crio.io') == 'disable')
-    
+def analyze_container_llc_alignment(container_data, llc_topology, cpu_to_llc, base_dir=None):
+    """Analyze LLC alignment for a single container using pre-loaded data."""
     result = {
-        'container_name': container_name,
-        'container_id': container_id[:12] if len(container_id) > 12 else container_id,
-        'full_container_id': container_id,
-        'is_isolated': is_isolated,
+        'container_name': container_data['container_name'],
+        'container_id': container_data['container_id'],
+        'full_container_id': container_data['full_container_id'],
+        'is_isolated': container_data['is_isolated'],
         'analysis_skipped': False
     }
     
-    if not is_isolated:
+    if not container_data['is_isolated']:
         result['analysis_skipped'] = True
         result['skip_reason'] = 'Container is not isolated (missing required annotations)'
         return result
     
-    # Get container CPU set
-    cpu_set = container_data.get('status', {}).get('resources', {}).get('linux', {}).get('cpusetCpus')
-    if not cpu_set:
+    container_cpus = container_data['container_cpus']
+    if not container_cpus:
         result['analysis_skipped'] = True
         result['skip_reason'] = 'No CPU set found for container'
         return result
     
-    container_cpus = parse_cpu_range(cpu_set)
     result['container_cpus'] = container_cpus
-    result['container_cpus_formatted'] = cpu_set
+    result['container_cpus_formatted'] = container_data['container_cpus_formatted']
     
     # Extract PCI devices (for informational purposes)
-    pci_devices = extract_pci_devices_from_container(container_data)
+    pci_devices = container_data['pci_devices']
     result['pci_devices'] = pci_devices
     
-    # Get LLC topology
-    llc_topology, cpu_to_llc = get_llc_topology(base_dir)
+    # Use pre-loaded LLC topology
     if not llc_topology:
         result['llc_alignment'] = {
             'alignment_status': 'error',
@@ -373,7 +186,7 @@ def analyze_container_llc_alignment(container_file_or_data, base_dir=None, is_li
     return result
 
 def analyze_all_containers(base_dir=None):
-    """Analyze LLC alignment for all isolated containers."""
+    """Analyze LLC alignment for all isolated containers using shared_data module."""
     results = {
         'containers': [],
         'summary': {
@@ -387,30 +200,28 @@ def analyze_all_containers(base_dir=None):
         'llc_topology': {}
     }
     
-    # Get LLC topology once
+    # Get LLC topology once using shared module (CACHED)
     llc_topology, cpu_to_llc = get_llc_topology(base_dir)
     results['llc_topology'] = llc_topology
     
     if base_dir:
-        # Sosreport analysis
-        containers_dir = os.path.join(base_dir, "sos_commands", "crio", "containers")
-        if not os.path.isdir(containers_dir):
-            results['error'] = f"Container directory not found: {containers_dir}"
+        # Get all container data once using shared module (CACHED)
+        all_containers = shared_data.load_all_container_data(base_dir)
+        
+        if not all_containers:
+            results['error'] = f"Could not load container data from sosreport directory: {base_dir}"
             return results
         
-        container_files = glob.glob(os.path.join(containers_dir, "*"))
-        
-        for container_file in container_files:
-            if not os.path.isfile(container_file):
-                continue
-            
+        # Process each container using pre-loaded data
+        for container_id, container_data in all_containers.items():
             results['summary']['total_containers'] += 1
             
-            container_analysis = analyze_container_llc_alignment(container_file, base_dir, is_live_data=False)
-            results['containers'].append(container_analysis)
-            
-            if container_analysis.get('is_isolated'):
+            if container_data.get('is_isolated'):
                 results['summary']['isolated_containers'] += 1
+                
+                # Analyze this container using pre-loaded data
+                container_analysis = analyze_container_llc_alignment(container_data, llc_topology, cpu_to_llc, base_dir)
+                results['containers'].append(container_analysis)
                 
                 if not container_analysis.get('analysis_skipped'):
                     results['summary']['containers_analyzed'] += 1
@@ -423,7 +234,7 @@ def analyze_all_containers(base_dir=None):
                     else:
                         results['summary']['containers_with_errors'] += 1
     else:
-        # Live system analysis using crictl
+        # Live system analysis using crictl - would benefit from similar optimization
         container_ids = get_live_container_list()
         if not container_ids:
             results['error'] = "Could not retrieve container list from live system (crictl not available or no containers)"
@@ -437,11 +248,43 @@ def analyze_all_containers(base_dir=None):
                 # Skip containers we can't inspect
                 continue
             
-            container_analysis = analyze_container_llc_alignment(container_data, base_dir, is_live_data=True)
-            results['containers'].append(container_analysis)
+            # Convert live container data to our standard format
+            # For live data, we need to create the container info manually since parse_container_data expects a file
+            container_name = (container_data.get('info', {}).get('config', {}).get('metadata', {}).get('name') or
+                             container_data.get('status', {}).get('metadata', {}).get('name') or
+                             "unknown")
             
-            if container_analysis.get('is_isolated'):
+            container_full_id = (container_data.get('status', {}).get('id') or
+                               container_data.get('info', {}).get('id') or
+                               container_id)
+            
+            annotations = container_data.get('info', {}).get('runtimeSpec', {}).get('annotations', {})
+            is_isolated = (annotations.get('irq-load-balancing.crio.io') == 'disable' and 
+                           annotations.get('cpu-quota.crio.io') == 'disable')
+            
+            cpu_set = container_data.get('status', {}).get('resources', {}).get('linux', {}).get('cpusetCpus')
+            container_cpus = shared_data.parse_cpu_range(cpu_set) if cpu_set else []
+            
+            pci_devices = shared_data.extract_pci_devices_from_container(container_data)
+            netns_id = shared_data.get_container_network_namespace(container_data)
+            
+            container_info = {
+                'container_name': container_name,
+                'container_id': container_full_id[:12] if len(container_full_id) > 12 else container_full_id,
+                'full_container_id': container_full_id,
+                'is_isolated': is_isolated,
+                'container_cpus': container_cpus,
+                'container_cpus_formatted': cpu_set or '',
+                'pci_devices': pci_devices,
+                'network_namespace': netns_id,
+                'analysis_skipped': False
+            }
+                
+            if container_info.get('is_isolated'):
                 results['summary']['isolated_containers'] += 1
+                
+                container_analysis = analyze_container_llc_alignment(container_info, llc_topology, cpu_to_llc, base_dir)
+                results['containers'].append(container_analysis)
                 
                 if not container_analysis.get('analysis_skipped'):
                     results['summary']['containers_analyzed'] += 1
@@ -590,14 +433,22 @@ def main():
     # Note: --container-id can work with both sosreport and live systems
     
     if args.container_id:
-        # Analyze single container
+        # Analyze single container using shared_data module
         if args.sosreport_dir:
-            container_file = os.path.join(args.sosreport_dir, "sos_commands", "crio", "containers", args.container_id)
-            if not os.path.isfile(container_file):
-                print(f"Error: Container file not found: {container_file}", file=sys.stderr)
+            all_containers = shared_data.load_all_container_data(args.sosreport_dir)
+            
+            container_data = None
+            for cid, cdata in all_containers.items():
+                if cid.startswith(args.container_id):
+                    container_data = cdata
+                    break
+            
+            if not container_data:
+                print(f"Error: Container {args.container_id} not found", file=sys.stderr)
                 sys.exit(1)
             
-            result = analyze_container_llc_alignment(container_file, args.sosreport_dir, is_live_data=False)
+            llc_topology, cpu_to_llc = get_llc_topology(args.sosreport_dir)
+            result = analyze_container_llc_alignment(container_data, llc_topology, cpu_to_llc, args.sosreport_dir)
         else:
             # Live system analysis for single container
             container_data = get_live_container_data(args.container_id)
@@ -605,7 +456,39 @@ def main():
                 print(f"Error: Could not get container data for {args.container_id} from live system", file=sys.stderr)
                 sys.exit(1)
             
-            result = analyze_container_llc_alignment(container_data, None, is_live_data=True)
+            # Convert live container data to our standard format (similar to above)
+            container_name = (container_data.get('info', {}).get('config', {}).get('metadata', {}).get('name') or
+                             container_data.get('status', {}).get('metadata', {}).get('name') or
+                             "unknown")
+            
+            container_full_id = (container_data.get('status', {}).get('id') or
+                               container_data.get('info', {}).get('id') or
+                               args.container_id)
+            
+            annotations = container_data.get('info', {}).get('runtimeSpec', {}).get('annotations', {})
+            is_isolated = (annotations.get('irq-load-balancing.crio.io') == 'disable' and 
+                           annotations.get('cpu-quota.crio.io') == 'disable')
+            
+            cpu_set = container_data.get('status', {}).get('resources', {}).get('linux', {}).get('cpusetCpus')
+            container_cpus = shared_data.parse_cpu_range(cpu_set) if cpu_set else []
+            
+            pci_devices = shared_data.extract_pci_devices_from_container(container_data)
+            netns_id = shared_data.get_container_network_namespace(container_data)
+            
+            container_info = {
+                'container_name': container_name,
+                'container_id': container_full_id[:12] if len(container_full_id) > 12 else container_full_id,
+                'full_container_id': container_full_id,
+                'is_isolated': is_isolated,
+                'container_cpus': container_cpus,
+                'container_cpus_formatted': cpu_set or '',
+                'pci_devices': pci_devices,
+                'network_namespace': netns_id,
+                'analysis_skipped': False
+            }
+            
+            llc_topology, cpu_to_llc = get_llc_topology()
+            result = analyze_container_llc_alignment(container_info, llc_topology, cpu_to_llc)
         
         if args.output_format == 'json':
             print(json.dumps(result, indent=2))

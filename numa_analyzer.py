@@ -4,6 +4,8 @@ NUMA Alignment Analyzer for Container IRQ Tool
 
 This script analyzes NUMA alignment between isolated containers and their PCI devices.
 It checks for proper alignment to ensure optimal performance in OpenShift/Kubernetes environments.
+
+OPTIMIZED: Now uses shared_data module for efficient data access.
 """
 
 import os
@@ -14,20 +16,18 @@ import glob
 import re
 import subprocess
 
-def parse_cpu_range(cpu_range_str):
-    """Parse CPU range string (e.g., '0-3,8-11,16') into list of CPU numbers."""
-    if not cpu_range_str or cpu_range_str in ('null', 'empty', ''):
-        return []
-    
-    cpus = []
-    for part in cpu_range_str.split(','):
-        part = part.strip()
-        if '-' in part:
-            start, end = map(int, part.split('-'))
-            cpus.extend(range(start, end + 1))
-        elif part.isdigit():
-            cpus.append(int(part))
-    return cpus
+# Import shared data module for efficient data access
+try:
+    import shared_data
+except ImportError:
+    print("Error: shared_data module not found. Please ensure shared_data.py is in the same directory.", file=sys.stderr)
+    sys.exit(1)
+
+# Use shared_data functions instead of duplicating code
+parse_cpu_range = shared_data.parse_cpu_range
+format_cpu_list_range = shared_data.format_cpu_list_range
+extract_pci_devices_from_container = shared_data.extract_pci_devices_from_container
+get_container_network_namespace = shared_data.get_container_network_namespace
 
 def get_numa_topology_from_cpuinfo(base_dir):
     """Parse NUMA topology from proc/cpuinfo in sosreport."""
@@ -80,61 +80,7 @@ def get_numa_topology_from_cpuinfo(base_dir):
     
     return numa_info
 
-def format_cpu_list_range(cpu_list):
-    """Format a list of CPU numbers into range format with step detection."""
-    if not cpu_list:
-        return ""
-    
-    cpu_list = sorted(cpu_list)
-    if len(cpu_list) == 1:
-        return str(cpu_list[0])
-    
-    ranges = []
-    i = 0
-    
-    while i < len(cpu_list):
-        start = cpu_list[i]
-        end = start
-        step = 1
-        
-        # Look ahead to find consecutive numbers or patterns
-        if i + 1 < len(cpu_list):
-            # Check if we have a step pattern (like even/odd cores)
-            if i + 2 < len(cpu_list):
-                potential_step = cpu_list[i + 1] - cpu_list[i]
-                if cpu_list[i + 2] - cpu_list[i + 1] == potential_step:
-                    step = potential_step
-        
-        # Find the end of this sequence
-        while i + 1 < len(cpu_list) and cpu_list[i + 1] == cpu_list[i] + step:
-            i += 1
-            end = cpu_list[i]
-        
-        # Format the range
-        if start == end:
-            ranges.append(str(start))
-        elif step == 1:
-            # Consecutive range
-            ranges.append(f"{start}-{end}")
-        else:
-            # Step range - show pattern more clearly
-            if end - start >= step * 3:  # Only show step notation for longer sequences
-                if step == 2 and start % 2 == 0:
-                    # Special case for even cores
-                    ranges.append(f"{start}-{end}:2 (even)")
-                elif step == 2 and start % 2 == 1:
-                    # Special case for odd cores
-                    ranges.append(f"{start}-{end}:2 (odd)")
-                else:
-                    ranges.append(f"{start}-{end}:{step}")
-            else:
-                # For short step sequences, just list them
-                sequence = list(range(start, end + 1, step))
-                ranges.append(",".join(map(str, sequence)))
-        
-        i += 1
-    
-    return ",".join(ranges)
+# format_cpu_list_range now imported from shared_data
 
 def get_numa_color_code(alignment_status):
     """Get color code for NUMA alignment status."""
@@ -157,74 +103,8 @@ def format_colored_text(text, color_code):
     """Format text with color code."""
     return f"{color_code}{text}\033[0m"
 
-def get_numa_topology(base_dir=None):
-    """Get NUMA topology information from the system."""
-    numa_info = {}
-    
-    if base_dir:
-        # For sosreport analysis - try standard location first
-        numa_base = os.path.join(base_dir, "sys", "devices", "system", "node")
-        
-        if os.path.isdir(numa_base):
-            try:
-                node_dirs = [d for d in os.listdir(numa_base) 
-                            if d.startswith('node') and d[4:].isdigit()]
-                
-                for node_dir in node_dirs:
-                    node_num = int(node_dir[4:])
-                    node_path = os.path.join(numa_base, node_dir)
-                    
-                    # Get CPUs for this NUMA node
-                    cpulist_file = os.path.join(node_path, "cpulist")
-                    if os.path.isfile(cpulist_file):
-                        try:
-                            with open(cpulist_file, 'r') as f:
-                                cpulist = f.read().strip()
-                            cpu_numbers = parse_cpu_range(cpulist)
-                            formatted_cpulist = format_cpu_list_range(cpu_numbers)
-                            numa_info[node_num] = {
-                                'cpus': cpu_numbers,
-                                'cpulist': formatted_cpulist
-                            }
-                        except (OSError, ValueError):
-                            continue
-            except OSError:
-                pass
-        
-        # If no NUMA info found, try fallback method using cpuinfo
-        if not numa_info:
-            numa_info = get_numa_topology_from_cpuinfo(base_dir)
-    else:
-        # For live system
-        numa_base = "/sys/devices/system/node"
-        
-        if os.path.isdir(numa_base):
-            try:
-                node_dirs = [d for d in os.listdir(numa_base) 
-                            if d.startswith('node') and d[4:].isdigit()]
-                
-                for node_dir in node_dirs:
-                    node_num = int(node_dir[4:])
-                    node_path = os.path.join(numa_base, node_dir)
-                    
-                    # Get CPUs for this NUMA node
-                    cpulist_file = os.path.join(node_path, "cpulist")
-                    if os.path.isfile(cpulist_file):
-                        try:
-                            with open(cpulist_file, 'r') as f:
-                                cpulist = f.read().strip()
-                            cpu_numbers = parse_cpu_range(cpulist)
-                            formatted_cpulist = format_cpu_list_range(cpu_numbers)
-                            numa_info[node_num] = {
-                                'cpus': cpu_numbers,
-                                'cpulist': formatted_cpulist
-                            }
-                        except (OSError, ValueError):
-                            continue
-            except OSError:
-                pass
-    
-    return numa_info
+# Use shared_data.get_numa_topology instead of duplicating the function
+get_numa_topology = shared_data.get_numa_topology
 
 def get_pci_numa_info_from_lspci(pci_address, base_dir):
     """Get NUMA node information for a PCI device from lspci output in sosreport."""
@@ -322,56 +202,7 @@ def get_pci_numa_info(pci_address, base_dir=None):
     
     return None
 
-def extract_pci_devices_from_container(container_data):
-    """Extract PCI device addresses from container annotations."""
-    pci_devices = []
-    
-    try:
-        # Get environment variables from the container spec
-        env_vars = container_data.get('info', {}).get('runtimeSpec', {}).get('process', {}).get('env', [])
-        
-        for env_var in env_vars:
-            if env_var.startswith('PCIDEVICE_OPENSHIFT') and '_INFO=' in env_var:
-                # Split on first '=' to get the JSON value
-                parts = env_var.split('=', 1)
-                if len(parts) != 2:
-                    continue
-                
-                try:
-                    # Parse the JSON value
-                    pci_info = json.loads(parts[1])
-                    
-                    # Extract device IDs from the nested structure
-                    for device_id, device_data in pci_info.items():
-                        if isinstance(device_data, dict) and 'generic' in device_data:
-                            generic_info = device_data['generic']
-                            if 'deviceID' in generic_info:
-                                pci_devices.append(generic_info['deviceID'])
-                
-                except (json.JSONDecodeError, KeyError, TypeError):
-                    continue
-    
-    except (KeyError, TypeError):
-        pass
-    
-    return pci_devices
-
-def get_container_network_namespace(container_data):
-    """Extract network namespace ID from container data."""
-    try:
-        namespaces = container_data.get('info', {}).get('runtimeSpec', {}).get('linux', {}).get('namespaces', [])
-        
-        for ns in namespaces:
-            if ns.get('type') == 'network' and 'path' in ns:
-                # Extract namespace ID from path like /var/run/netns/598de306-dfa4-4025-bc6b-d466c42d980d
-                ns_path = ns['path']
-                ns_id = ns_path.split('/')[-1]
-                return ns_id
-    
-    except (KeyError, TypeError):
-        pass
-    
-    return None
+# extract_pci_devices_from_container and get_container_network_namespace now imported from shared_data
 
 def validate_pci_in_netns(pci_addresses, netns_id, base_dir=None):
     """Validate that PCI devices are present in the container's network namespace."""
@@ -491,58 +322,32 @@ def check_numa_alignment(container_cpus, pci_devices, numa_topology, base_dir=No
     
     return alignment_results
 
-def analyze_container_numa_alignment(container_file, base_dir=None):
-    """Analyze NUMA alignment for a single container."""
-    try:
-        with open(container_file, 'r') as f:
-            container_data = json.load(f)
-    except (json.JSONDecodeError, FileNotFoundError, OSError) as e:
-        return {
-            'error': f"Failed to read container data: {str(e)}",
-            'container_id': os.path.basename(container_file),
-            'analysis_skipped': True
-        }
-    
-    # Get container metadata
-    container_name = (container_data.get('info', {}).get('config', {}).get('metadata', {}).get('name') or
-                     container_data.get('status', {}).get('metadata', {}).get('name') or
-                     "unknown")
-    
-    container_id = (container_data.get('status', {}).get('id') or
-                   container_data.get('info', {}).get('id') or
-                   os.path.basename(container_file))
-    
-    # Check for isolation annotations
-    annotations = container_data.get('info', {}).get('runtimeSpec', {}).get('annotations', {})
-    is_isolated = (annotations.get('irq-load-balancing.crio.io') == 'disable' and 
-                   annotations.get('cpu-quota.crio.io') == 'disable')
-    
+def analyze_container_numa_alignment(container_data, numa_topology, base_dir=None):
+    """Analyze NUMA alignment for a single container using pre-loaded data."""
     result = {
-        'container_name': container_name,
-        'container_id': container_id[:12] if len(container_id) > 12 else container_id,
-        'full_container_id': container_id,
-        'is_isolated': is_isolated,
+        'container_name': container_data['container_name'],
+        'container_id': container_data['container_id'],
+        'full_container_id': container_data['full_container_id'],
+        'is_isolated': container_data['is_isolated'],
         'analysis_skipped': False
     }
     
-    if not is_isolated:
+    if not container_data['is_isolated']:
         result['analysis_skipped'] = True
         result['skip_reason'] = 'Container is not isolated (missing required annotations)'
         return result
     
-    # Get container CPU set
-    cpu_set = container_data.get('status', {}).get('resources', {}).get('linux', {}).get('cpusetCpus')
-    if not cpu_set:
+    container_cpus = container_data['container_cpus']
+    if not container_cpus:
         result['analysis_skipped'] = True
         result['skip_reason'] = 'No CPU set found for container'
         return result
     
-    container_cpus = parse_cpu_range(cpu_set)
     result['container_cpus'] = container_cpus
-    result['container_cpus_formatted'] = cpu_set
+    result['container_cpus_formatted'] = container_data['container_cpus_formatted']
     
     # Extract PCI devices
-    pci_devices = extract_pci_devices_from_container(container_data)
+    pci_devices = container_data['pci_devices']
     result['pci_devices'] = pci_devices
     
     if not pci_devices:
@@ -551,7 +356,7 @@ def analyze_container_numa_alignment(container_file, base_dir=None):
         return result
     
     # Get network namespace
-    netns_id = get_container_network_namespace(container_data)
+    netns_id = container_data['network_namespace']
     result['network_namespace'] = netns_id
     
     # Validate PCI devices in network namespace
@@ -562,8 +367,7 @@ def analyze_container_numa_alignment(container_file, base_dir=None):
         result['netns_validation'] = {}
         result['netns_validation_error'] = 'Could not determine network namespace'
     
-    # Get NUMA topology
-    numa_topology = get_numa_topology(base_dir)
+    # Use pre-loaded NUMA topology
     if not numa_topology:
         result['numa_alignment'] = {
             'alignment_status': 'error',
@@ -579,7 +383,7 @@ def analyze_container_numa_alignment(container_file, base_dir=None):
     return result
 
 def analyze_all_containers(base_dir=None):
-    """Analyze NUMA alignment for all isolated containers."""
+    """Analyze NUMA alignment for all isolated containers using shared_data module."""
     results = {
         'containers': [],
         'summary': {
@@ -593,34 +397,30 @@ def analyze_all_containers(base_dir=None):
         'numa_topology': {}
     }
     
-    # Get NUMA topology once
+    # Get NUMA topology once using shared module (CACHED)
     numa_topology = get_numa_topology(base_dir)
     results['numa_topology'] = numa_topology
     
-    if base_dir:
-        # Sosreport analysis
-        containers_dir = os.path.join(base_dir, "sos_commands", "crio", "containers")
-        if not os.path.isdir(containers_dir):
-            results['error'] = f"Container directory not found: {containers_dir}"
-            return results
-        
-        container_files = glob.glob(os.path.join(containers_dir, "*"))
-    else:
-        # Live system analysis - would need to implement crictl integration
-        results['error'] = "Live system analysis not yet implemented for NUMA analyzer"
+    # Get all container data once using shared module (CACHED)
+    all_containers = shared_data.load_all_container_data(base_dir)
+    
+    if not all_containers:
+        if base_dir:
+            results['error'] = f"Could not load container data from sosreport directory: {base_dir}"
+        else:
+            results['error'] = "Live system analysis not yet implemented for NUMA analyzer"
         return results
     
-    for container_file in container_files:
-        if not os.path.isfile(container_file):
-            continue
-        
+    # Process each container using pre-loaded data
+    for container_id, container_data in all_containers.items():
         results['summary']['total_containers'] += 1
         
-        container_analysis = analyze_container_numa_alignment(container_file, base_dir)
-        results['containers'].append(container_analysis)
-        
-        if container_analysis.get('is_isolated'):
+        if container_data.get('is_isolated'):
             results['summary']['isolated_containers'] += 1
+            
+            # Analyze this container using pre-loaded data
+            container_analysis = analyze_container_numa_alignment(container_data, numa_topology, base_dir)
+            results['containers'].append(container_analysis)
             
             if not container_analysis.get('analysis_skipped'):
                 if container_analysis.get('pci_devices'):
@@ -788,17 +588,21 @@ def main():
         sys.exit(1)
     
     if args.container_id:
-        # Analyze single container
-        if args.sosreport_dir:
-            container_file = os.path.join(args.sosreport_dir, "sos_commands", "crio", "containers", args.container_id)
-            if not os.path.isfile(container_file):
-                print(f"Error: Container file not found: {container_file}", file=sys.stderr)
-                sys.exit(1)
-            
-            result = analyze_container_numa_alignment(container_file, args.sosreport_dir)
-        else:
-            print("Error: Live system analysis for single container not implemented", file=sys.stderr)
+        # Analyze single container using shared_data module
+        all_containers = shared_data.load_all_container_data(args.sosreport_dir)
+        
+        container_data = None
+        for cid, cdata in all_containers.items():
+            if cid.startswith(args.container_id):
+                container_data = cdata
+                break
+        
+        if not container_data:
+            print(f"Error: Container {args.container_id} not found", file=sys.stderr)
             sys.exit(1)
+        
+        numa_topology = get_numa_topology(args.sosreport_dir)
+        result = analyze_container_numa_alignment(container_data, numa_topology, args.sosreport_dir)
         
         if args.output_format == 'json':
             print(json.dumps(result, indent=2))

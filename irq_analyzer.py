@@ -4,6 +4,8 @@ High-performance IRQ analyzer for container CPU isolation.
 
 This script handles the computationally intensive parts of IRQ analysis
 that were causing performance issues in the bash script.
+
+OPTIMIZED: Now uses shared_data module for efficient data access.
 """
 
 import os
@@ -13,92 +15,32 @@ import argparse
 import glob
 import re
 
-def parse_cpu_range(cpu_range_str):
-    """Parse CPU range string (e.g., '0-3,8-11,16') into list of CPU numbers."""
-    if not cpu_range_str or cpu_range_str in ('null', 'empty', ''):
-        return []
-    
-    cpus = []
-    for part in cpu_range_str.split(','):
-        part = part.strip()
-        if '-' in part:
-            start, end = map(int, part.split('-'))
-            cpus.extend(range(start, end + 1))
-        elif part.isdigit():
-            cpus.append(int(part))
-    return cpus
+# Import shared data module for efficient data access
+try:
+    import shared_data
+except ImportError:
+    print("Error: shared_data module not found. Please ensure shared_data.py is in the same directory.", file=sys.stderr)
+    sys.exit(1)
+
+# Use shared_data.parse_cpu_range instead of duplicating the function
+parse_cpu_range = shared_data.parse_cpu_range
 
 def get_isolated_cpus_sosreport(base_dir):
-    """Extract isolated CPUs from sosreport container data."""
-    isolated_cpus = set()
-    containers_dir = os.path.join(base_dir, "sos_commands", "crio", "containers")
-    
-    if not os.path.isdir(containers_dir):
-        return isolated_cpus
-    
-    container_files = glob.glob(os.path.join(containers_dir, "*"))
-    
-    for container_file in container_files:
-        if not os.path.isfile(container_file):
-            continue
-            
-        try:
-            with open(container_file, 'r') as f:
-                container_data = json.load(f)
-            
-            # Check for isolation annotations
-            annotations = container_data.get('info', {}).get('runtimeSpec', {}).get('annotations', {})
-            if (annotations.get('irq-load-balancing.crio.io') == 'disable' and 
-                annotations.get('cpu-quota.crio.io') == 'disable'):
-                
-                cpu_set = container_data.get('status', {}).get('resources', {}).get('linux', {}).get('cpusetCpus')
-                if cpu_set:
-                    cpus = parse_cpu_range(cpu_set)
-                    isolated_cpus.update(cpus)
-                    
-        except (json.JSONDecodeError, KeyError, FileNotFoundError):
-            continue
-    
-    return sorted(isolated_cpus)
+    """Extract isolated CPUs from sosreport container data using shared_data module."""
+    return shared_data.get_isolated_cpus(base_dir)
 
 def get_container_info_for_cpu(cpu, base_dir):
-    """Get container information for a specific CPU from sosreport."""
+    """Get container information for a specific CPU using shared_data module."""
     containers_on_cpu = []
-    containers_dir = os.path.join(base_dir, "sos_commands", "crio", "containers")
     
-    if not os.path.isdir(containers_dir):
-        return containers_on_cpu
+    # Use cached container data instead of re-reading files
+    all_containers = shared_data.load_all_container_data(base_dir)
     
-    container_files = glob.glob(os.path.join(containers_dir, "*"))
-    
-    for container_file in container_files:
-        if not os.path.isfile(container_file):
-            continue
-            
-        try:
-            with open(container_file, 'r') as f:
-                container_data = json.load(f)
-            
-            # Get container name and ID
-            container_name = (container_data.get('info', {}).get('config', {}).get('metadata', {}).get('name') or
-                            container_data.get('status', {}).get('metadata', {}).get('name') or
-                            "unknown")
-            
-            container_id = (container_data.get('status', {}).get('id') or
-                          container_data.get('info', {}).get('id') or
-                          "unknown")
-            
-            # Get CPU set
-            cpu_set = container_data.get('status', {}).get('resources', {}).get('linux', {}).get('cpusetCpus')
-            
-            if cpu_set:
-                cpus = parse_cpu_range(cpu_set)
-                if cpu in cpus:
-                    short_id = container_id[:12] if len(container_id) > 12 else container_id
-                    containers_on_cpu.append(f"{container_name} ({short_id})")
-                    
-        except (json.JSONDecodeError, KeyError, FileNotFoundError):
-            continue
+    for container_data in all_containers.values():
+        if cpu in container_data.get('container_cpus', []):
+            container_name = container_data['container_name']
+            container_id = container_data['container_id']
+            containers_on_cpu.append(f"{container_name} ({container_id})")
     
     return containers_on_cpu
 
