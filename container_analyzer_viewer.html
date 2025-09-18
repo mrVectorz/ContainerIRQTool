@@ -144,12 +144,28 @@
         .stat-item {
             display: flex;
             justify-content: space-between;
+            align-items: flex-start;
             margin-bottom: 8px;
             padding: 5px 0;
+            gap: 20px;
         }
 
         .stat-value {
             font-weight: bold;
+            flex: 1;
+            text-align: right;
+            padding: 2px 6px;
+            border-radius: 3px;
+            transition: background-color 0.2s;
+            cursor: text;
+        }
+
+        .stat-value:hover {
+            background-color: rgba(102, 126, 234, 0.1);
+        }
+
+        .analyzed-file-banner:hover {
+            background: linear-gradient(135deg, #f0f4ff 0%, #ddd6fe 100%) !important;
         }
 
         .status-good { color: #38a169; }
@@ -590,15 +606,33 @@
                 return;
             }
 
-            let html = '<div class="summary-grid">';
+            // Add analyzed file as standalone element
+            let html = `
+                <div class="analyzed-file-banner" style="margin-bottom: 25px; padding: 12px 20px; background: linear-gradient(135deg, #f8fafc 0%, #e2e8f0 100%); border-radius: 8px; border-left: 4px solid #667eea; transition: background-color 0.2s;">
+                    <div style="font-size: 0.9em; color: #4a5568; margin-bottom: 5px; font-weight: 500;">Analyzed File:</div>
+                    <div style="font-family: monospace; font-size: 0.85em; color: #2d3748; line-height: 1.4; cursor: text; padding: 3px 0;">
+                        ${formatFilePath(analysisData.system_info?.analyzed_file) || 'N/A'}
+                    </div>
+                </div>
+            `;
+            
+            html += '<div class="summary-grid">';
 
             // System Overview
             html += `
                 <div class="summary-card">
                     <h3>System Overview</h3>
                     <div class="stat-item">
+                        <span>Hostname:</span>
+                        <span class="stat-value text-small" style="line-height: 1.4;">${formatHostname(analysisData.system_info?.hostname) || 'N/A'}</span>
+                    </div>
+                    <div class="stat-item">
+                        <span>Uptime:</span>
+                        <span class="stat-value">${formatUptime(analysisData.system_info?.uptime_hours, analysisData.system_info?.uptime_seconds)}</span>
+                    </div>
+                    <div class="stat-item">
                         <span>Analysis Type:</span>
-                        <span class="stat-value">${analysisData.analysis_type || 'N/A'}</span>
+                        <span class="stat-value text-small">${analysisData.analysis_type || 'N/A'}</span>
                     </div>
                     <div class="stat-item">
                         <span>Mode:</span>
@@ -631,7 +665,7 @@
                         </div>
                         <div class="stat-item">
                             <span>Kernel Mask:</span>
-                            <span class="stat-value text-mono text-small">${irqConfig.allowed_irq_cpus?.kernel_mask || 'N/A'}</span>
+                            <span class="stat-value text-small" style="line-height: 1.4;">${formatKernelMask(irqConfig.allowed_irq_cpus?.kernel_mask) || 'N/A'}</span>
                         </div>
                     </div>
                 `;
@@ -727,6 +761,47 @@
                 `;
             }
 
+            // PCI Devices Summary
+            if (analysisData.numa_alignment_analysis?.containers) {
+                const pciStats = calculatePCIStatistics(analysisData.numa_alignment_analysis);
+
+                html += `
+                    <div class="summary-card">
+                        <h3>PCI Devices</h3>
+                        <div class="stat-item">
+                            <span>Total PCI Devices:</span>
+                            <span class="stat-value">${pciStats.totalDevices}</span>
+                        </div>
+                        <div class="stat-item">
+                            <span>Containers with PCI:</span>
+                            <span class="stat-value">${pciStats.containersWithPCI}</span>
+                        </div>
+                        <div class="stat-item">
+                            <span>NUMA Aligned:</span>
+                            <span class="stat-value ${pciStats.alignedDevices > 0 ? 'status-good' : ''}">${pciStats.alignedDevices}</span>
+                        </div>
+                        <div class="stat-item">
+                            <span>NUMA Misaligned:</span>
+                            <span class="stat-value ${pciStats.misalignedDevices > 0 ? 'status-error' : 'status-good'}">${pciStats.misalignedDevices}</span>
+                        </div>
+                        <div class="stat-item">
+                            <span>Analysis Errors:</span>
+                            <span class="stat-value ${pciStats.errorDevices > 0 ? 'status-warning' : 'status-good'}">${pciStats.errorDevices}</span>
+                        </div>
+                        <div style="margin-top: 15px;">
+                            <button onclick="togglePCIDetails()" 
+                                    style="padding: 8px 15px; background: #667eea; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 0.9em;">
+                                <span id="pci-details-btn-text">Show PCI Details</span>
+                            </button>
+                            <div id="pci-details" style="display: none; margin-top: 15px; padding: 15px; background: #f8fafc; border-radius: 5px; font-family: monospace; font-size: 0.9em; line-height: 1.6;">
+                                <strong>PCI DEVICES BY NUMA NODE:</strong><br>
+                                ${generatePCIByNUMADisplay(pciStats.devicesByNUMA)}
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }
+
             html += '</div>';
 
             // Add current system state section
@@ -750,6 +825,154 @@
             `;
 
             summaryElement.innerHTML = html;
+        }
+
+        // Format kernel mask to allow breaking only at commas
+        function formatKernelMask(mask) {
+            if (!mask) return mask;
+            // Insert word break opportunities after each comma
+            return mask.replace(/,/g, ',<wbr>');
+        }
+
+        // Format hostname to allow breaking only at dots
+        function formatHostname(hostname) {
+            if (!hostname) return hostname;
+            // Insert word break opportunities after each dot
+            return hostname.replace(/\./g, '.<wbr>');
+        }
+
+        // Format file path to allow breaking only at forward slashes
+        function formatFilePath(filePath) {
+            if (!filePath) return filePath;
+            // Insert word break opportunities after each forward slash
+            return filePath.replace(/\//g, '/<wbr>');
+        }
+
+        // Format uptime for display
+        function formatUptime(uptimeHours, uptimeSeconds) {
+            if (!uptimeHours && !uptimeSeconds) {
+                return 'N/A';
+            }
+            
+            const hours = uptimeHours || (uptimeSeconds ? uptimeSeconds / 3600 : 0);
+            
+            if (hours < 1) {
+                const minutes = Math.floor(hours * 60);
+                return `${minutes} min`;
+            } else if (hours < 24) {
+                return `${hours.toFixed(1)} hours`;
+            } else {
+                const days = Math.floor(hours / 24);
+                const remainingHours = Math.floor(hours % 24);
+                if (remainingHours > 0) {
+                    return `${days}d ${remainingHours}h`;
+                } else {
+                    return `${days} days`;
+                }
+            }
+        }
+
+        // Calculate PCI device statistics
+        function calculatePCIStatistics(numaAnalysis) {
+            let totalDevices = 0;
+            let alignedDevices = 0;
+            let misalignedDevices = 0;
+            let errorDevices = 0;
+            let containersWithPCI = 0;
+            let devicesByNUMA = {};
+            
+            if (!numaAnalysis.containers) {
+                return {
+                    totalDevices: 0,
+                    alignedDevices: 0,
+                    misalignedDevices: 0,
+                    errorDevices: 0,
+                    containersWithPCI: 0,
+                    devicesByNUMA: {}
+                };
+            }
+            
+            numaAnalysis.containers.forEach(container => {
+                if (container.pci_devices && container.pci_devices.length > 0) {
+                    containersWithPCI++;
+                    totalDevices += container.pci_devices.length;
+                    
+                    // Analyze each PCI device
+                    container.pci_devices.forEach(device => {
+                        const pciInfo = container.numa_alignment?.pci_numa_info?.[device];
+                        
+                        if (!pciInfo || pciInfo.error) {
+                            errorDevices++;
+                        } else {
+                            const numaNode = pciInfo.numa_node;
+                            const aligned = pciInfo.aligned;
+                            
+                            // Initialize NUMA node entry if not exists
+                            if (!devicesByNUMA[numaNode]) {
+                                devicesByNUMA[numaNode] = {
+                                    devices: [],
+                                    alignedCount: 0,
+                                    misalignedCount: 0
+                                };
+                            }
+                            
+                            // Add device to NUMA node list
+                            devicesByNUMA[numaNode].devices.push({
+                                device: device,
+                                aligned: aligned,
+                                containerName: container.container_name,
+                                containerId: container.container_id
+                            });
+                            
+                            if (aligned) {
+                                alignedDevices++;
+                                devicesByNUMA[numaNode].alignedCount++;
+                            } else {
+                                misalignedDevices++;
+                                devicesByNUMA[numaNode].misalignedCount++;
+                            }
+                        }
+                    });
+                }
+            });
+            
+            return {
+                totalDevices,
+                alignedDevices,
+                misalignedDevices,
+                errorDevices,
+                containersWithPCI,
+                devicesByNUMA
+            };
+        }
+
+        // Generate PCI devices by NUMA node display
+        function generatePCIByNUMADisplay(devicesByNUMA) {
+            if (Object.keys(devicesByNUMA).length === 0) {
+                return 'No PCI devices with NUMA information found.';
+            }
+            
+            let display = '';
+            Object.keys(devicesByNUMA).sort((a, b) => parseInt(a) - parseInt(b)).forEach(numaNode => {
+                const nodeData = devicesByNUMA[numaNode];
+                const totalDevices = nodeData.devices.length;
+                const alignedCount = nodeData.alignedCount;
+                const misalignedCount = nodeData.misalignedCount;
+                
+                display += `<span style="color: #2b6cb0; font-weight: bold;">NUMA ${numaNode}:</span> ${totalDevices} device(s) `;
+                display += `(<span class="status-good">${alignedCount} aligned</span>, `;
+                display += `<span class="${misalignedCount > 0 ? 'status-error' : 'status-good'}">${misalignedCount} misaligned</span>)<br>`;
+                
+                // List devices for this NUMA node
+                nodeData.devices.forEach(deviceInfo => {
+                    const statusClass = deviceInfo.aligned ? 'status-good' : 'status-error';
+                    const statusSymbol = deviceInfo.aligned ? '✓' : '✗';
+                    display += `  <span class="${statusClass}">${statusSymbol} ${deviceInfo.device}</span> (${deviceInfo.containerId})<br>`;
+                });
+                display += '<br>';
+            });
+            
+            return display;
         }
 
         // Calculate comprehensive IRQ statistics
@@ -813,13 +1036,13 @@
                         <div style="margin: 8px 0;">
                             <strong>/proc/irq/default_smp_affinity:</strong><br>
                             <span style="background: #e2e8f0; padding: 4px 8px; border-radius: 3px; color: #2d3748;">
-                                ${analysisData.computed_irq_configuration?.allowed_irq_cpus?.kernel_mask || 'Not available'}
+                                ${formatKernelMask(analysisData.computed_irq_configuration?.allowed_irq_cpus?.kernel_mask) || 'Not available'}
                             </span>
                         </div>
                         <div style="margin: 8px 0;">
                             <strong>/etc/sysconfig/irqbalance IRQBALANCE_BANNED_CPUS:</strong><br>
                             <span style="background: #e2e8f0; padding: 4px 8px; border-radius: 3px; color: #2d3748;">
-                                ${analysisData.computed_irq_configuration?.banned_irq_cpus?.irqbalance_mask || 'Not available'}
+                                ${formatKernelMask(analysisData.computed_irq_configuration?.banned_irq_cpus?.irqbalance_mask) || 'Not available'}
                             </span>
                         </div>
                     </div>
@@ -836,10 +1059,10 @@
                         <h4 style="margin-bottom: 10px; color: #2d3748;">Recommended IRQ Settings</h4>
                         <div style="font-family: monospace; font-size: 0.9em; line-height: 1.6;">
                             <div style="margin: 8px 0;">
-                                <strong>echo "${current_smp}" > /proc/irq/default_smp_affinity</strong>
+                                <strong>echo "${formatKernelMask(current_smp)}" > /proc/irq/default_smp_affinity</strong>
                             </div>
                             <div style="margin: 8px 0;">
-                                <strong>IRQBALANCE_BANNED_CPUS="${current_banned}"</strong>
+                                <strong>IRQBALANCE_BANNED_CPUS="${formatKernelMask(current_banned)}"</strong>
                             </div>
                         </div>
                     </div>
@@ -880,6 +1103,16 @@
                     if (analysisData.computed_irq_configuration) {
                         recommendations.push(`💡 Apply the recommended IRQ settings shown in the system configuration above.`);
                     }
+                }
+            }
+
+            if (analysisData.numa_alignment_analysis?.containers) {
+                const pciStats = calculatePCIStatistics(analysisData.numa_alignment_analysis);
+                if (pciStats.misalignedDevices > 0) {
+                    recommendations.push(`⚠️ ${pciStats.misalignedDevices} PCI device(s) are not NUMA-aligned with their containers. Consider reassigning CPUs or PCI devices.`);
+                }
+                if (pciStats.errorDevices > 0) {
+                    recommendations.push(`❌ ${pciStats.errorDevices} PCI device(s) have analysis errors. Check device assignments and NUMA topology.`);
                 }
             }
 
@@ -1363,6 +1596,20 @@
                     bgColor: '#f8fafc', 
                     borderColor: '#e2e8f0' 
                 };
+            }
+        }
+
+        // Toggle PCI details visibility
+        function togglePCIDetails() {
+            const details = document.getElementById('pci-details');
+            const buttonText = document.getElementById('pci-details-btn-text');
+            
+            if (details.style.display === 'none') {
+                details.style.display = 'block';
+                buttonText.textContent = 'Hide PCI Details';
+            } else {
+                details.style.display = 'none';
+                buttonText.textContent = 'Show PCI Details';
             }
         }
 

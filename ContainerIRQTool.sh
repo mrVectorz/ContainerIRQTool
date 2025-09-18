@@ -86,6 +86,72 @@ if [[ ! -d "$BASE_DIR" ]]; then
   exit 1
 fi
 
+# Function to get uptime information early
+get_system_uptime() {
+  local base_dir="$1"
+  
+  if [[ -n "$base_dir" ]]; then
+    # For sosreport - use the Python uptime parsing function
+    SCRIPT_DIR="$(dirname "$(readlink -f "$0")")"
+    PYTHON_SCRIPT="$SCRIPT_DIR/irq_analyzer.py"
+    
+    if [[ -f "$PYTHON_SCRIPT" ]]; then
+      # Run a minimal Python command to get just uptime
+      local uptime_result=$(python3 -c "
+import sys
+sys.path.append('$SCRIPT_DIR')
+import irq_analyzer
+uptime = irq_analyzer.get_uptime_seconds('$base_dir')
+if uptime:
+    print(f'{uptime:.0f}:{uptime/3600:.2f}')
+else:
+    print('none:none')
+" 2>/dev/null)
+      
+      if [[ "$uptime_result" != "none:none" ]]; then
+        SYSTEM_UPTIME_SECONDS="${uptime_result%:*}"
+        SYSTEM_UPTIME_HOURS="${uptime_result#*:}"
+      fi
+    fi
+  else
+    # For live system - read from /proc/uptime
+    if [[ -f "/proc/uptime" ]]; then
+      local uptime_data=$(cat /proc/uptime 2>/dev/null)
+      if [[ -n "$uptime_data" ]]; then
+        SYSTEM_UPTIME_SECONDS="${uptime_data%% *}"
+        SYSTEM_UPTIME_HOURS=$(echo "$SYSTEM_UPTIME_SECONDS" | awk '{printf "%.2f", $1/3600}')
+      fi
+    fi
+  fi
+}
+
+# Gather system information
+HOSTNAME=""
+ANALYZED_FILE=""
+SYSTEM_UPTIME_SECONDS=""
+SYSTEM_UPTIME_HOURS=""
+if [[ "$LOCAL_MODE" == "true" ]]; then
+  # For sosreport analysis
+  HOSTNAME_FILE="$BASE_DIR/hostname"
+  if [[ -f "$HOSTNAME_FILE" ]]; then
+    HOSTNAME=$(cat "$HOSTNAME_FILE" 2>/dev/null | tr -d '\n\r' | head -1)
+  fi
+  if [[ -z "$HOSTNAME" ]]; then
+    HOSTNAME="Unknown (hostname file not found)"
+  fi
+  ANALYZED_FILE="$BASE_DIR"
+  
+  # Get uptime for sosreport
+  get_system_uptime "$BASE_DIR"
+else
+  # For live system
+  HOSTNAME=$(hostname 2>/dev/null || echo "Unknown")
+  ANALYZED_FILE="Live System"
+  
+  # Get uptime for live system
+  get_system_uptime ""
+fi
+
 # Check for shared_data.py module (required for optimized performance)
 SCRIPT_DIR="$(dirname "$(readlink -f "$0")")"
 SHARED_DATA_MODULE="$SCRIPT_DIR/shared_data.py"
@@ -266,6 +332,17 @@ if [[ "$OUTPUT_FORMAT" == "json" ]]; then
   echo "{"
   echo "  \"analysis_type\": \"IRQ Affinity Configuration Analysis\","
   echo "  \"mode\": \"$(if [[ "$LOCAL_MODE" == "true" ]]; then echo "sosreport"; else echo "live"; fi)\","
+  echo "  \"system_info\": {"
+  echo "    \"hostname\": \"$(json_escape "$HOSTNAME")\","
+  echo "    \"analyzed_file\": \"$(json_escape "$ANALYZED_FILE")\","
+  if [[ -n "$SYSTEM_UPTIME_SECONDS" ]]; then
+    echo "    \"uptime_seconds\": $SYSTEM_UPTIME_SECONDS,"
+    echo "    \"uptime_hours\": $SYSTEM_UPTIME_HOURS"
+  else
+    echo "    \"uptime_seconds\": null,"
+    echo "    \"uptime_hours\": null"
+  fi
+  echo "  },"
   echo "  \"container_analysis\": {"
   if [[ -n "$FORMATTED_ISOLATED_CPUS" ]]; then
     echo "    \"isolated_cpus_found\": true,"
@@ -281,6 +358,13 @@ else
   log "========================================="
   log "IRQ Affinity Configuration Analysis"
   log "========================================="
+  log ""
+  log "SYSTEM INFORMATION:"
+  log "  Hostname: $HOSTNAME"
+  log "  Analyzed: $ANALYZED_FILE"
+  if [[ -n "$SYSTEM_UPTIME_HOURS" ]]; then
+    log "  Uptime: ${SYSTEM_UPTIME_HOURS} hours"
+  fi
   log ""
   log "CONTAINER ANALYSIS:"
   if [[ -n "$FORMATTED_ISOLATED_CPUS" ]]; then

@@ -9,9 +9,11 @@ The `container_analyzer_viewer.html` is an interactive web interface designed to
 ### 📊 Three-Tab Interface
 
 1. **Summary & Overview Tab**
+   - System information display (hostname, analyzed file, uptime)
    - System-wide statistics and health overview
    - IRQ configuration summary with masks
    - NUMA, LLC, and IRQ violation summaries
+   - **PCI Devices summary** with NUMA alignment statistics and expandable device details
    - Intelligent recommendations based on analysis results
    - Quick status indicators (color-coded for good/warning/error)
 
@@ -44,8 +46,11 @@ The `container_analyzer_viewer.html` is an interactive web interface designed to
 - **Real-time Search**: Filter containers by name or ID
 - **Expandable Details**: Click containers to see full analysis
 - **IRQ Detail Expansion**: Secondary button to show CPU-by-CPU IRQ analysis
+- **PCI Details Toggle**: Expandable PCI device breakdown by NUMA node
 - **Color-coded Sections**: Each analysis type (NUMA, LLC, PCI, IRQ) has its own colored background
 - **System Configuration Display**: Shows current `/proc/irq/default_smp_affinity` and `/etc/sysconfig/irqbalance` settings
+- **Smart Text Wrapping**: Hostnames break at dots, file paths at slashes, kernel masks at commas
+- **Improved Spacing**: Better visual separation for easy text selection and copying
 - **Responsive Design**: Works on desktop, tablet, and mobile
 - **Color Coding**: Consistent visual indicators throughout
 - **Smart Recommendations**: Context-aware suggestions for fixes
@@ -84,6 +89,17 @@ The topology visualization shows:
 - **Inner boxes**: LLC (Last Level Cache) groups (blue gradient)
 - **Small tags**: Containers assigned to each LLC
 - **Orange tags**: PCI devices in each NUMA node
+
+### PCI Devices Summary
+
+The PCI Devices summary card provides:
+- **Overview Statistics**: Total devices, containers with PCI, alignment counts
+- **NUMA Alignment Status**: Color-coded counts of aligned/misaligned devices
+- **Expandable Details**: Click "Show PCI Details" to reveal:
+  - Devices organized by NUMA node
+  - Alignment status for each device (✓ aligned, ✗ misaligned)
+  - Associated container IDs (short format)
+  - Per-node alignment statistics
 
 ### Recommendations Engine
 
