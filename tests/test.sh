@@ -237,6 +237,77 @@ llm_pipe=$(echo "$json_out" | python3 "$REPO_DIR/llm_summarize.py")
 echo "$llm_pipe" | python3 -m json.tool > /dev/null 2>&1
 assert_exit_code "llm_summarize.py pipe produces valid JSON" "0" "$?"
 
+# Container filter tests
+echo "[13] Backward compatibility - no filter = annotation-based"
+nofilter_json=$(bash "$TOOL" --local "$FIXTURE" --check-violations --check-numa-alignment --check-llc-alignment --output-format json)
+nofilter_isolated=$(echo "$nofilter_json" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['numa_alignment_analysis']['summary']['isolated_containers'])")
+assert_eq "No filter selects 2 annotated containers (NUMA)" "2" "$nofilter_isolated"
+
+echo "[14] Container name filter - regex match"
+name_json=$(bash "$TOOL" --local "$FIXTURE" --container-name "custom-worker" --check-numa-alignment --output-format json)
+name_isolated=$(echo "$name_json" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['numa_alignment_analysis']['summary']['isolated_containers'])")
+assert_eq "Name filter selects custom-worker" "1" "$name_isolated"
+name_cname=$(echo "$name_json" | python3 -c "import sys,json; d=json.load(sys.stdin); cs=d['numa_alignment_analysis']['containers']; print([c['container_name'] for c in cs if not c.get('analysis_skipped')][0])")
+assert_eq "Name filter matched correct container" "custom-worker" "$name_cname"
+
+echo "[15] Container name filter - regex pattern"
+regex_json=$(bash "$TOOL" --local "$FIXTURE" --container-name "dpdk|sriov" --check-numa-alignment --output-format json)
+regex_isolated=$(echo "$regex_json" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['numa_alignment_analysis']['summary']['isolated_containers'])")
+assert_eq "Regex filter selects dpdk + sriov" "2" "$regex_isolated"
+
+echo "[16] Pod name filter"
+pod_json=$(bash "$TOOL" --local "$FIXTURE" --pod-name "worker-pod" --check-numa-alignment --output-format json)
+pod_isolated=$(echo "$pod_json" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['numa_alignment_analysis']['summary']['isolated_containers'])")
+assert_eq "Pod name filter selects worker-pod container" "1" "$pod_isolated"
+
+echo "[17] Container ID prefix filter"
+id_json=$(bash "$TOOL" --local "$FIXTURE" --container-id "bb11cc22" --check-numa-alignment --output-format json)
+id_isolated=$(echo "$id_json" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['numa_alignment_analysis']['summary']['isolated_containers'])")
+assert_eq "Container ID prefix filter selects correct container" "1" "$id_isolated"
+
+echo "[18] Annotation filter"
+ann_json=$(bash "$TOOL" --local "$FIXTURE" --annotation "app.kubernetes.io/component=worker" --check-numa-alignment --output-format json)
+ann_isolated=$(echo "$ann_json" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['numa_alignment_analysis']['summary']['isolated_containers'])")
+assert_eq "Annotation filter selects annotated container" "1" "$ann_isolated"
+
+echo "[19] PCI device filter"
+pci_json=$(bash "$TOOL" --local "$FIXTURE" --pci-device "5e:00" --check-numa-alignment --output-format json)
+pci_isolated=$(echo "$pci_json" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['numa_alignment_analysis']['summary']['isolated_containers'])")
+assert_eq "PCI device filter selects container with matching device" "1" "$pci_isolated"
+
+echo "[20] Filter override - non-annotated container selected"
+override_json=$(bash "$TOOL" --local "$FIXTURE" --container-name "custom-worker" --check-violations --output-format json)
+override_cpus=$(echo "$override_json" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['container_analysis']['isolated_cpus_raw'])")
+assert_contains "Override selects non-annotated container CPUs" "$override_cpus" "9"
+
+echo "[21] AND logic - multiple filters"
+and_json=$(bash "$TOOL" --local "$FIXTURE" --container-name "custom" --pod-name "worker-pod" --check-numa-alignment --output-format json)
+and_isolated=$(echo "$and_json" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['numa_alignment_analysis']['summary']['isolated_containers'])")
+assert_eq "AND logic with name+pod matches 1 container" "1" "$and_isolated"
+
+echo "[22] No-match filter produces zero isolated"
+nomatch_json=$(bash "$TOOL" --local "$FIXTURE" --container-name "nonexistent-xyz" --check-numa-alignment --output-format json)
+nomatch_isolated=$(echo "$nomatch_json" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['numa_alignment_analysis']['summary']['isolated_containers'])")
+assert_eq "No-match filter finds 0 containers" "0" "$nomatch_isolated"
+
+echo "[23] Filter flags rejected without --local"
+set +e
+filter_live_out=$(bash "$TOOL" --container-name "test" 2>&1)
+filter_live_rc=$?
+set -e
+assert_eq "Filter without --local exits non-zero" "1" "$filter_live_rc"
+assert_contains "Filter without --local shows error" "$filter_live_out" "require --local"
+
+echo "[24] Standalone analyzer filter args"
+standalone_filtered=$(python3 "$REPO_DIR/numa_analyzer.py" --sosreport-dir "$FIXTURE" --filter-container-name "custom-worker" --output-format json 2>/dev/null)
+standalone_isolated=$(echo "$standalone_filtered" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['summary']['isolated_containers'])")
+assert_eq "Standalone numa_analyzer with filter selects 1" "1" "$standalone_isolated"
+
+echo "[25] Help text shows filter options"
+help_out=$(bash "$TOOL" --help 2>&1)
+assert_contains "Help shows --container-name" "$help_out" "--container-name"
+assert_contains "Help shows --annotation" "$help_out" "--annotation"
+
 # ============================================================
 echo ""
 echo "=== Results ==="

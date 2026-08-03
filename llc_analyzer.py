@@ -152,9 +152,12 @@ def analyze_container_llc_alignment(container_data, llc_topology, cpu_to_llc, ba
         'analysis_skipped': False
     }
     
-    if not container_data['is_isolated']:
+    if not shared_data.container_matches_filter(container_data):
         result['analysis_skipped'] = True
-        result['skip_reason'] = 'Container is not isolated (missing required annotations)'
+        if shared_data.is_filter_active():
+            result['skip_reason'] = 'Container does not match active filter'
+        else:
+            result['skip_reason'] = 'Container is not isolated (missing required annotations)'
         return result
     
     container_cpus = container_data['container_cpus']
@@ -216,10 +219,9 @@ def analyze_all_containers(base_dir=None):
         for container_id, container_data in all_containers.items():
             results['summary']['total_containers'] += 1
             
-            if container_data.get('is_isolated'):
+            if shared_data.container_matches_filter(container_data):
                 results['summary']['isolated_containers'] += 1
-                
-                # Analyze this container using pre-loaded data
+
                 container_analysis = analyze_container_llc_alignment(container_data, llc_topology, cpu_to_llc, base_dir)
                 results['containers'].append(container_analysis)
                 
@@ -277,12 +279,14 @@ def analyze_all_containers(base_dir=None):
                 'container_cpus_formatted': cpu_set or '',
                 'pci_devices': pci_devices,
                 'network_namespace': netns_id,
+                'pod_name': annotations.get('io.kubernetes.pod.name', ''),
+                'annotations': annotations,
                 'analysis_skipped': False
             }
-                
-            if container_info.get('is_isolated'):
+
+            if shared_data.container_matches_filter(container_info):
                 results['summary']['isolated_containers'] += 1
-                
+
                 container_analysis = analyze_container_llc_alignment(container_info, llc_topology, cpu_to_llc, base_dir)
                 results['containers'].append(container_analysis)
                 
@@ -348,8 +352,8 @@ def format_text_output(analysis_results, full_analysis=False):
         output_lines.append("")
     
     # Detailed analysis
-    containers_analyzed = [c for c in analysis_results['containers'] 
-                          if c.get('is_isolated') and not c.get('analysis_skipped')]
+    containers_analyzed = [c for c in analysis_results['containers']
+                          if not c.get('analysis_skipped')]
     
     if containers_analyzed:
         output_lines.append("DETAILED ANALYSIS:")
@@ -427,8 +431,13 @@ def main():
     parser.add_argument('--container-id', help='Analyze specific container ID')
     parser.add_argument('--full-analysis', action='store_true',
                        help='Show all containers (default: limit to first 10)')
-    
+    shared_data.add_filter_args(parser)
+
     args = parser.parse_args()
+
+    filter_config = shared_data.parse_filter_args(args)
+    if filter_config:
+        shared_data.set_container_filter(filter_config)
     
     # Note: --container-id can work with both sosreport and live systems
     
@@ -484,9 +493,11 @@ def main():
                 'container_cpus_formatted': cpu_set or '',
                 'pci_devices': pci_devices,
                 'network_namespace': netns_id,
+                'pod_name': annotations.get('io.kubernetes.pod.name', ''),
+                'annotations': annotations,
                 'analysis_skipped': False
             }
-            
+
             llc_topology, cpu_to_llc = get_llc_topology()
             result = analyze_container_llc_alignment(container_info, llc_topology, cpu_to_llc)
         

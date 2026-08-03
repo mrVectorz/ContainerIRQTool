@@ -332,9 +332,12 @@ def analyze_container_numa_alignment(container_data, numa_topology, base_dir=Non
         'analysis_skipped': False
     }
     
-    if not container_data['is_isolated']:
+    if not shared_data.container_matches_filter(container_data):
         result['analysis_skipped'] = True
-        result['skip_reason'] = 'Container is not isolated (missing required annotations)'
+        if shared_data.is_filter_active():
+            result['skip_reason'] = 'Container does not match active filter'
+        else:
+            result['skip_reason'] = 'Container is not isolated (missing required annotations)'
         return result
     
     container_cpus = container_data['container_cpus']
@@ -415,10 +418,9 @@ def analyze_all_containers(base_dir=None):
     for container_id, container_data in all_containers.items():
         results['summary']['total_containers'] += 1
         
-        if container_data.get('is_isolated'):
+        if shared_data.container_matches_filter(container_data):
             results['summary']['isolated_containers'] += 1
-            
-            # Analyze this container using pre-loaded data
+
             container_analysis = analyze_container_numa_alignment(container_data, numa_topology, base_dir)
             results['containers'].append(container_analysis)
             
@@ -486,8 +488,8 @@ def format_text_output(analysis_results):
         output_lines.append("")
     
     # Detailed analysis
-    containers_analyzed = [c for c in analysis_results['containers'] 
-                          if c.get('is_isolated') and not c.get('analysis_skipped')]
+    containers_analyzed = [c for c in analysis_results['containers']
+                          if not c.get('analysis_skipped')]
     
     if containers_analyzed:
         output_lines.append("DETAILED ANALYSIS:")
@@ -580,8 +582,13 @@ def main():
     parser.add_argument('--output-format', choices=['json', 'text'], default='text',
                        help='Output format')
     parser.add_argument('--container-id', help='Analyze specific container ID')
-    
+    shared_data.add_filter_args(parser)
+
     args = parser.parse_args()
+
+    filter_config = shared_data.parse_filter_args(args)
+    if filter_config:
+        shared_data.set_container_filter(filter_config)
     
     if args.container_id and not args.sosreport_dir:
         print("Error: --container-id requires --sosreport-dir", file=sys.stderr)

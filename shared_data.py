@@ -20,6 +20,7 @@ _container_cache = {}
 _numa_topology_cache = {}
 _llc_topology_cache = {}
 _cache_initialized = False
+_container_filter = None
 
 
 def parse_cpu_range(cpu_range_str: str) -> List[int]:
@@ -93,6 +94,98 @@ def format_cpu_list_range(cpu_list: List[int]) -> str:
         i += 1
     
     return ",".join(ranges)
+
+
+def set_container_filter(filter_config: Optional[Dict[str, Any]] = None):
+    global _container_filter
+    if filter_config and any(filter_config.values()):
+        _container_filter = filter_config
+    else:
+        _container_filter = None
+
+
+def is_filter_active() -> bool:
+    return _container_filter is not None
+
+
+def container_matches_filter(container_info: Dict[str, Any]) -> bool:
+    if _container_filter is None:
+        return container_info.get('is_isolated', False)
+
+    if 'container_name' in _container_filter and _container_filter['container_name']:
+        try:
+            if not re.search(_container_filter['container_name'], container_info.get('container_name', '')):
+                return False
+        except re.error:
+            return False
+
+    if 'pod_name' in _container_filter and _container_filter['pod_name']:
+        try:
+            if not re.search(_container_filter['pod_name'], container_info.get('pod_name', '')):
+                return False
+        except re.error:
+            return False
+
+    if 'container_id' in _container_filter and _container_filter['container_id']:
+        prefix = _container_filter['container_id']
+        if not container_info.get('full_container_id', '').startswith(prefix):
+            return False
+
+    if 'annotations' in _container_filter and _container_filter['annotations']:
+        raw_data = container_info.get('raw_data', {})
+        annotations = raw_data.get('info', {}).get('runtimeSpec', {}).get('annotations', {})
+        for key, value in _container_filter['annotations']:
+            if annotations.get(key) != value:
+                return False
+
+    if 'pci_device' in _container_filter and _container_filter['pci_device']:
+        try:
+            pattern = _container_filter['pci_device']
+            pci_devices = container_info.get('pci_devices', [])
+            if not any(re.search(pattern, dev) for dev in pci_devices):
+                return False
+        except re.error:
+            return False
+
+    return True
+
+
+def add_filter_args(parser):
+    group = parser.add_argument_group('container filters',
+        'When any filter is specified, it replaces the default annotation-based '
+        'isolation check. All specified filters must match (AND logic).')
+    group.add_argument('--filter-container-name', metavar='REGEX',
+                       help='Select containers whose name matches REGEX')
+    group.add_argument('--filter-pod-name', metavar='REGEX',
+                       help='Select containers whose pod name matches REGEX')
+    group.add_argument('--filter-container-id', metavar='PREFIX',
+                       help='Select containers whose ID starts with PREFIX')
+    group.add_argument('--filter-annotation', metavar='KEY=VALUE',
+                       action='append', default=None,
+                       help='Select containers with annotation KEY=VALUE (repeatable)')
+    group.add_argument('--filter-pci-device', metavar='PATTERN',
+                       help='Select containers with a PCI device matching PATTERN')
+
+
+def parse_filter_args(args) -> Optional[Dict[str, Any]]:
+    filter_config = {}
+    if getattr(args, 'filter_container_name', None):
+        filter_config['container_name'] = args.filter_container_name
+    if getattr(args, 'filter_pod_name', None):
+        filter_config['pod_name'] = args.filter_pod_name
+    if getattr(args, 'filter_container_id', None):
+        filter_config['container_id'] = args.filter_container_id
+    if getattr(args, 'filter_annotation', None):
+        pairs = []
+        for ann in args.filter_annotation:
+            if '=' in ann:
+                k, v = ann.split('=', 1)
+                pairs.append((k, v))
+        if pairs:
+            filter_config['annotations'] = pairs
+    if getattr(args, 'filter_pci_device', None):
+        filter_config['pci_device'] = args.filter_pci_device
+    return filter_config if filter_config else None
 
 
 def extract_pci_devices_from_container(container_data: Dict) -> List[str]:
@@ -171,9 +264,12 @@ def parse_container_data(container_file: str, base_dir: Optional[str] = None) ->
     
     # Check for isolation annotations
     annotations = container_data.get('info', {}).get('runtimeSpec', {}).get('annotations', {})
-    is_isolated = (annotations.get('irq-load-balancing.crio.io') == 'disable' and 
+    is_isolated = (annotations.get('irq-load-balancing.crio.io') == 'disable' and
                    annotations.get('cpu-quota.crio.io') == 'disable')
-    
+
+    pod_name = annotations.get('io.kubernetes.pod.name', '')
+    k8s_namespace = annotations.get('io.kubernetes.pod.namespace', '')
+
     # Get container CPU set
     cpu_set = container_data.get('status', {}).get('resources', {}).get('linux', {}).get('cpusetCpus')
     container_cpus = parse_cpu_range(cpu_set) if cpu_set else []
@@ -189,6 +285,8 @@ def parse_container_data(container_file: str, base_dir: Optional[str] = None) ->
         'container_id': container_id[:12] if len(container_id) > 12 else container_id,
         'full_container_id': container_id,
         'is_isolated': is_isolated,
+        'pod_name': pod_name,
+        'k8s_namespace': k8s_namespace,
         'container_cpus': container_cpus,
         'container_cpus_formatted': cpu_set or '',
         'pci_devices': pci_devices,
@@ -446,7 +544,7 @@ def get_llc_topology(base_dir: Optional[str] = None) -> Tuple[Dict[int, Dict], D
 def get_isolated_containers(base_dir: Optional[str] = None) -> Dict[str, Dict]:
     """Get all isolated containers (cached)."""
     all_containers = load_all_container_data(base_dir)
-    return {cid: cdata for cid, cdata in all_containers.items() if cdata.get('is_isolated')}
+    return {cid: cdata for cid, cdata in all_containers.items() if container_matches_filter(cdata)}
 
 
 def get_isolated_cpus(base_dir: Optional[str] = None) -> List[int]:
@@ -462,8 +560,9 @@ def get_isolated_cpus(base_dir: Optional[str] = None) -> List[int]:
 
 def clear_cache():
     """Clear all cached data (useful for testing or when data changes)."""
-    global _container_cache, _numa_topology_cache, _llc_topology_cache, _cache_initialized
+    global _container_cache, _numa_topology_cache, _llc_topology_cache, _cache_initialized, _container_filter
     _container_cache.clear()
     _numa_topology_cache.clear()
     _llc_topology_cache.clear()
     _cache_initialized = False
+    _container_filter = None

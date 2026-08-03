@@ -342,9 +342,14 @@ def main():
                        help='Output format')
     parser.add_argument('--limit-display', action='store_true',
                        help='Limit display to top 10 IRQs per CPU for better readability')
-    
+    shared_data.add_filter_args(parser)
+
     args = parser.parse_args()
-    
+
+    filter_config = shared_data.parse_filter_args(args)
+    if filter_config:
+        shared_data.set_container_filter(filter_config)
+
     # Determine isolated CPUs
     if args.isolated_cpus:
         isolated_cpus = parse_cpu_range(args.isolated_cpus)

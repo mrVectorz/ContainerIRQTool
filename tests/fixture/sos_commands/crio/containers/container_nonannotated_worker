@@ -1,0 +1,42 @@
+{
+  "info": {
+    "id": "bb11cc22dd33ee44ff55aa66bb77cc88dd99ee00ff11aa22bb33cc44dd55ee66",
+    "config": {
+      "metadata": {
+        "name": "custom-worker"
+      }
+    },
+    "runtimeSpec": {
+      "annotations": {
+        "io.kubernetes.container.name": "custom-worker",
+        "io.kubernetes.pod.name": "worker-pod-01",
+        "io.kubernetes.pod.namespace": "workloads",
+        "app.kubernetes.io/component": "worker"
+      },
+      "process": {
+        "env": [
+          "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+          "PCIDEVICE_OPENSHIFT_IO_WORKER_NIC_INFO={\"0000:5e:00.1\":{\"generic\":{\"deviceID\":\"0000:5e:00.1\"}}}"
+        ]
+      },
+      "linux": {
+        "namespaces": [
+          {"type": "network", "path": "/var/run/netns/11223344-5566-7788-99aa-bbccddeeff00"},
+          {"type": "pid"},
+          {"type": "ipc"}
+        ]
+      }
+    }
+  },
+  "status": {
+    "id": "bb11cc22dd33ee44ff55aa66bb77cc88dd99ee00ff11aa22bb33cc44dd55ee66",
+    "metadata": {
+      "name": "custom-worker"
+    },
+    "resources": {
+      "linux": {
+        "cpusetCpus": "9,10"
+      }
+    }
+  }
+}

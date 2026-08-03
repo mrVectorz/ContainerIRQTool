@@ -6,7 +6,7 @@ Works against live nodes or sosreport directories. Intentionally uses only stand
 
 ## What it does
 
-1. Finds containers with CRI-O isolation annotations (`irq-load-balancing.crio.io=disable` + `cpu-quota.crio.io=disable`)
+1. Finds containers with CRI-O isolation annotations (`irq-load-balancing.crio.io=disable` + `cpu-quota.crio.io=disable`), or uses custom filter flags to select any container by name, pod, ID, annotation, or PCI device
 2. Collects their pinned CPU sets and computes which CPUs should be banned from handling IRQs
 3. Generates the correct `default_smp_affinity` and `IRQBALANCE_BANNED_CPUS` masks
 4. Optionally analyzes:
@@ -36,6 +36,20 @@ Works against live nodes or sosreport directories. Intentionally uses only stand
 | `--full-analysis` | Show all CPUs/containers (default caps at top 10) |
 | `--output-format FORMAT` | `text` (default), `json`, or `llm-summary` |
 
+#### Container filter options (requires `--local`)
+
+By default, only containers with both CRI-O isolation annotations are analyzed. These flags **replace** the default annotation check, letting you select any container:
+
+| Option | Description |
+|--------|-------------|
+| `--container-name REGEX` | Match container name (regex) |
+| `--pod-name REGEX` | Match pod name (regex) |
+| `--container-id PREFIX` | Match container ID prefix |
+| `--annotation KEY=VALUE` | Match annotation (repeatable) |
+| `--pci-device PATTERN` | Match PCI device address (regex) |
+
+When multiple filters are specified, all must match (AND logic).
+
 ### Examples
 
 ```bash
@@ -50,6 +64,15 @@ sudo ./ContainerIRQTool.sh
 
 # Compact output for LLM consumption (~97% smaller than full JSON)
 ./ContainerIRQTool.sh --local /path/to/sosreport --check-violations --check-numa-alignment --output-format llm-summary
+
+# Analyze a specific container by name (overrides annotation check)
+./ContainerIRQTool.sh --local /path/to/sosreport --container-name "my-app" --check-violations
+
+# Analyze all containers in a pod
+./ContainerIRQTool.sh --local /path/to/sosreport --pod-name "worker-pod" --check-numa-alignment
+
+# Combine filters (AND logic)
+./ContainerIRQTool.sh --local /path/to/sosreport --container-name "dpdk" --annotation "app=network" --check-violations
 ```
 
 ## Output formats

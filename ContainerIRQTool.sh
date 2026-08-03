@@ -17,6 +17,12 @@ CHECK_NUMA=false
 CHECK_LLC=false
 FULL_ANALYSIS=false
 OUTPUT_FORMAT="text"
+FILTER_CONTAINER_NAME=""
+FILTER_POD_NAME=""
+FILTER_CONTAINER_ID=""
+FILTER_ANNOTATIONS=()
+FILTER_PCI_DEVICE=""
+HAS_FILTER=false
 ORIGINAL_ARGS=("$@")
 
 while [[ $# -gt 0 ]]; do
@@ -57,7 +63,7 @@ while [[ $# -gt 0 ]]; do
       fi
       ;;
     -h|--help)
-      echo "Usage: $0 [--local /path/to/sosreport] [--check-violations] [--check-numa-alignment] [--check-llc-alignment] [--full-analysis] [--output-format FORMAT]"
+      echo "Usage: $0 [--local /path/to/sosreport] [--check-violations] [--check-numa-alignment] [--check-llc-alignment] [--full-analysis] [--output-format FORMAT] [FILTER OPTIONS]"
       echo "  --local DIR              Run against sosreport directory instead of live host"
       echo "  --check-violations       Enable IRQ violation analysis (slower, disabled by default)"
       echo "  --check-numa-alignment   Enable NUMA alignment analysis for isolated containers"
@@ -66,12 +72,70 @@ while [[ $# -gt 0 ]]; do
       echo "  --output-format FORMAT   Output format: 'text' (default), 'json', or 'llm-summary'"
       echo "  -h, --help               Show this help message"
       echo ""
+      echo "CONTAINER FILTER OPTIONS (requires --local, replaces default annotation check):"
+      echo "  --container-name REGEX   Select containers whose name matches REGEX"
+      echo "  --pod-name REGEX         Select containers whose pod name matches REGEX"
+      echo "  --container-id PREFIX    Select containers whose ID starts with PREFIX"
+      echo "  --annotation KEY=VALUE   Select containers with matching annotation (repeatable)"
+      echo "  --pci-device PATTERN     Select containers with PCI devices matching PATTERN"
+      echo "  When multiple filters are specified, all must match (AND logic)."
+      echo ""
       echo "PERFORMANCE NOTES:"
       echo "  - Optimized with shared data caching for 2-3x better performance"
       echo "  - Container data loaded once and shared across all analyzers"
       echo "  - NUMA and LLC topology information cached and reused"
       echo "  - Multiple analysis types can be run together efficiently"
       exit 0
+      ;;
+    --container-name)
+      if [[ -n $2 && $2 != -* ]]; then
+        FILTER_CONTAINER_NAME="$2"
+        HAS_FILTER=true
+        shift 2
+      else
+        echo "Error: --container-name requires a regex pattern argument"
+        exit 1
+      fi
+      ;;
+    --pod-name)
+      if [[ -n $2 && $2 != -* ]]; then
+        FILTER_POD_NAME="$2"
+        HAS_FILTER=true
+        shift 2
+      else
+        echo "Error: --pod-name requires a regex pattern argument"
+        exit 1
+      fi
+      ;;
+    --container-id)
+      if [[ -n $2 && $2 != -* ]]; then
+        FILTER_CONTAINER_ID="$2"
+        HAS_FILTER=true
+        shift 2
+      else
+        echo "Error: --container-id requires an ID prefix argument"
+        exit 1
+      fi
+      ;;
+    --annotation)
+      if [[ -n $2 && $2 == *=* ]]; then
+        FILTER_ANNOTATIONS+=("$2")
+        HAS_FILTER=true
+        shift 2
+      else
+        echo "Error: --annotation requires a KEY=VALUE argument"
+        exit 1
+      fi
+      ;;
+    --pci-device)
+      if [[ -n $2 && $2 != -* ]]; then
+        FILTER_PCI_DEVICE="$2"
+        HAS_FILTER=true
+        shift 2
+      else
+        echo "Error: --pci-device requires a regex pattern argument"
+        exit 1
+      fi
       ;;
     *)
       echo "Unknown option: $1"
@@ -85,6 +149,30 @@ done
 if [[ ! -d "$BASE_DIR" ]]; then
   echo "Error: Directory '$BASE_DIR' does not exist"
   exit 1
+fi
+
+# Filter flags require --local mode (v1 constraint)
+if [[ "$HAS_FILTER" == "true" && "$LOCAL_MODE" != "true" ]]; then
+  echo "Error: Container filter flags (--container-name, --pod-name, --container-id, --annotation, --pci-device) require --local mode"
+  exit 1
+fi
+
+# Build FILTER_ARGS to pass to Python analyzers
+FILTER_ARGS=""
+if [[ -n "$FILTER_CONTAINER_NAME" ]]; then
+  FILTER_ARGS="$FILTER_ARGS --filter-container-name $FILTER_CONTAINER_NAME"
+fi
+if [[ -n "$FILTER_POD_NAME" ]]; then
+  FILTER_ARGS="$FILTER_ARGS --filter-pod-name $FILTER_POD_NAME"
+fi
+if [[ -n "$FILTER_CONTAINER_ID" ]]; then
+  FILTER_ARGS="$FILTER_ARGS --filter-container-id $FILTER_CONTAINER_ID"
+fi
+for ann in "${FILTER_ANNOTATIONS[@]}"; do
+  FILTER_ARGS="$FILTER_ARGS --filter-annotation $ann"
+done
+if [[ -n "$FILTER_PCI_DEVICE" ]]; then
+  FILTER_ARGS="$FILTER_ARGS --filter-pci-device $FILTER_PCI_DEVICE"
 fi
 
 # Handle llm-summary: re-exec as json and post-process through llm_summarize.py
@@ -198,7 +286,7 @@ if [[ "$LOCAL_MODE" == "true" ]]; then
   PYTHON_SCRIPT="$SCRIPT_DIR/irq_analyzer.py"
   
   if [[ -f "$PYTHON_SCRIPT" ]]; then
-    isolated_cpu_array=($(python3 "$PYTHON_SCRIPT" --sosreport-dir "$BASE_DIR" --output-format summary 2>/dev/null | grep "^ISOLATED_CPUS=" | cut -d= -f2 | tr ',' ' '))
+    isolated_cpu_array=($(python3 "$PYTHON_SCRIPT" --sosreport-dir "$BASE_DIR" $FILTER_ARGS --output-format summary 2>/dev/null | grep "^ISOLATED_CPUS=" | cut -d= -f2 | tr ',' ' '))
     if [[ ${#isolated_cpu_array[@]} -gt 0 ]]; then
       # Convert array back to comma-separated string
       IFS=','
@@ -712,7 +800,7 @@ check_irq_violations() {
     if [[ "$FULL_ANALYSIS" != "true" ]]; then
         limit_flag="--limit-display"
     fi
-    analyzer_output=$(python3 "$PYTHON_SCRIPT" $python_args --output-format summary $limit_flag)
+    analyzer_output=$(python3 "$PYTHON_SCRIPT" $python_args $FILTER_ARGS --output-format summary $limit_flag)
     
     if [[ $? -ne 0 || -z "$analyzer_output" ]]; then
         log "  ✗ ERROR: Python analyzer failed to run"
@@ -865,7 +953,7 @@ check_llc_alignment_json() {
     
     # Run LLC analyzer with JSON output
     local analyzer_output
-    analyzer_output=$(python3 "$LLC_SCRIPT" $llc_args --output-format json 2>/dev/null)
+    analyzer_output=$(python3 "$LLC_SCRIPT" $llc_args $FILTER_ARGS --output-format json 2>/dev/null)
     
     if [[ $? -ne 0 || -z "$analyzer_output" ]]; then
         echo "    \"error\": true,"
@@ -904,7 +992,7 @@ check_numa_alignment_json() {
     
     # Run NUMA analyzer with JSON output
     local analyzer_output
-    analyzer_output=$(python3 "$NUMA_SCRIPT" $numa_args --output-format json 2>/dev/null)
+    analyzer_output=$(python3 "$NUMA_SCRIPT" $numa_args $FILTER_ARGS --output-format json 2>/dev/null)
     
     if [[ $? -ne 0 || -z "$analyzer_output" ]]; then
         echo "    \"error\": true,"
@@ -950,7 +1038,7 @@ check_llc_alignment_text() {
     
     # Run LLC analyzer with text output
     local analyzer_output
-    analyzer_output=$(python3 "$LLC_SCRIPT" $llc_args --output-format text 2>/dev/null)
+    analyzer_output=$(python3 "$LLC_SCRIPT" $llc_args $FILTER_ARGS --output-format text 2>/dev/null)
     
     if [[ $? -ne 0 || -z "$analyzer_output" ]]; then
         log "  ✗ ERROR: LLC analyzer failed to run"
@@ -989,7 +1077,7 @@ check_numa_alignment_text() {
     
     # Run NUMA analyzer with text output
     local analyzer_output
-    analyzer_output=$(python3 "$NUMA_SCRIPT" $numa_args --output-format text 2>/dev/null)
+    analyzer_output=$(python3 "$NUMA_SCRIPT" $numa_args $FILTER_ARGS --output-format text 2>/dev/null)
     
     if [[ $? -ne 0 || -z "$analyzer_output" ]]; then
         log "  ✗ ERROR: NUMA analyzer failed to run"
@@ -1045,7 +1133,7 @@ check_irq_violations_json() {
     if [[ "$FULL_ANALYSIS" != "true" ]]; then
         limit_flag="--limit-display"
     fi
-    analyzer_output=$(python3 "$PYTHON_SCRIPT" $python_args --output-format json $limit_flag 2>/dev/null)
+    analyzer_output=$(python3 "$PYTHON_SCRIPT" $python_args $FILTER_ARGS --output-format json $limit_flag 2>/dev/null)
     
     if [[ $? -ne 0 || -z "$analyzer_output" ]]; then
         echo "    \"error\": true,"
