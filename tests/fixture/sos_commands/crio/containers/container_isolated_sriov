@@ -1,0 +1,43 @@
+{
+  "info": {
+    "id": "f1e2d3c4b5a6f1e2d3c4b5a6f1e2d3c4b5a6f1e2d3c4b5a6f1e2d3c4b5a6f1e2",
+    "config": {
+      "metadata": {
+        "name": "sriov-worker"
+      }
+    },
+    "runtimeSpec": {
+      "annotations": {
+        "irq-load-balancing.crio.io": "disable",
+        "cpu-quota.crio.io": "disable",
+        "io.kubernetes.container.name": "sriov-worker",
+        "io.kubernetes.pod.name": "sriov-pod-01",
+        "io.kubernetes.pod.namespace": "test-workload"
+      },
+      "process": {
+        "env": [
+          "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+          "PCIDEVICE_OPENSHIFT_IO_SRIOV_NIC_INFO={\"0000:af:00.2\":{\"generic\":{\"deviceID\":\"0000:af:00.2\"}}}"
+        ]
+      },
+      "linux": {
+        "namespaces": [
+          {"type": "network", "path": "/var/run/netns/aabbccdd-1234-5678-9abc-def012345678"},
+          {"type": "pid"},
+          {"type": "ipc"}
+        ]
+      }
+    }
+  },
+  "status": {
+    "id": "f1e2d3c4b5a6f1e2d3c4b5a6f1e2d3c4b5a6f1e2d3c4b5a6f1e2d3c4b5a6f1e2",
+    "metadata": {
+      "name": "sriov-worker"
+    },
+    "resources": {
+      "linux": {
+        "cpusetCpus": "3,5,7"
+      }
+    }
+  }
+}

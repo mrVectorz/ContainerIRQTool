@@ -1,0 +1,2 @@
+# irqbalance configuration
+IRQBALANCE_BANNED_CPUS="0000"

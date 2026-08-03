@@ -1,0 +1,20 @@
+3b:02.0 Ethernet controller [0200]: Intel Corporation Ethernet Adaptive Virtual Function [8086:1889] (rev 02)
+	Subsystem: Intel Corporation Ethernet Adaptive Virtual Function [8086:0000]
+	Physical Slot: 2
+	Control: I/O- Mem+ BusMaster+ SpecCycle- MemWINV- VGASnoop- ParErr- Stepping- SERR- FastB2B- DisINTx+
+	NUMA node: 0
+	Region 0: Memory at d0100000 (64-bit, prefetchable) [size=1M]
+
+3b:02.1 Ethernet controller [0200]: Intel Corporation Ethernet Adaptive Virtual Function [8086:1889] (rev 02)
+	Subsystem: Intel Corporation Ethernet Adaptive Virtual Function [8086:0000]
+	Physical Slot: 2
+	Control: I/O- Mem+ BusMaster+ SpecCycle- MemWINV- VGASnoop- ParErr- Stepping- SERR- FastB2B- DisINTx+
+	NUMA node: 0
+	Region 0: Memory at d0200000 (64-bit, prefetchable) [size=1M]
+
+af:00.2 Ethernet controller [0200]: Mellanox Technologies MT27800 Family [ConnectX-5 Virtual Function] [15b3:1018] (rev 00)
+	Subsystem: Mellanox Technologies MT27800 Family [ConnectX-5 Virtual Function] [15b3:0064]
+	Physical Slot: 0-2
+	Control: I/O- Mem+ BusMaster+ SpecCycle- MemWINV- VGASnoop- ParErr- Stepping- SERR- FastB2B- DisINTx+
+	NUMA node: 1
+	Region 0: Memory at e0100000 (64-bit, prefetchable) [size=1M]

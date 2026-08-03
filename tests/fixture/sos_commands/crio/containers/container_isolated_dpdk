@@ -1,0 +1,44 @@
+{
+  "info": {
+    "id": "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2",
+    "config": {
+      "metadata": {
+        "name": "dpdk-testapp"
+      }
+    },
+    "runtimeSpec": {
+      "annotations": {
+        "irq-load-balancing.crio.io": "disable",
+        "cpu-quota.crio.io": "disable",
+        "io.kubernetes.container.name": "dpdk-testapp",
+        "io.kubernetes.pod.name": "dpdk-pod-01",
+        "io.kubernetes.pod.namespace": "test-workload"
+      },
+      "process": {
+        "env": [
+          "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+          "PCIDEVICE_OPENSHIFT_IO_DPDK_NIC_1_INFO={\"0000:3b:02.0\":{\"generic\":{\"deviceID\":\"0000:3b:02.0\"}}}",
+          "PCIDEVICE_OPENSHIFT_IO_DPDK_NIC_2_INFO={\"0000:3b:02.1\":{\"generic\":{\"deviceID\":\"0000:3b:02.1\"}}}"
+        ]
+      },
+      "linux": {
+        "namespaces": [
+          {"type": "network", "path": "/var/run/netns/aabbccdd-1234-5678-9abc-def012345678"},
+          {"type": "pid"},
+          {"type": "ipc"}
+        ]
+      }
+    }
+  },
+  "status": {
+    "id": "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2",
+    "metadata": {
+      "name": "dpdk-testapp"
+    },
+    "resources": {
+      "linux": {
+        "cpusetCpus": "2,4,6,8"
+      }
+    }
+  }
+}

@@ -1,0 +1,39 @@
+{
+  "info": {
+    "id": "99887766554433221100998877665544332211009988776655443322110099aa",
+    "config": {
+      "metadata": {
+        "name": "monitoring-agent"
+      }
+    },
+    "runtimeSpec": {
+      "annotations": {
+        "io.kubernetes.container.name": "monitoring-agent",
+        "io.kubernetes.pod.name": "monitor-pod-01",
+        "io.kubernetes.pod.namespace": "monitoring"
+      },
+      "process": {
+        "env": [
+          "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+        ]
+      },
+      "linux": {
+        "namespaces": [
+          {"type": "pid"},
+          {"type": "ipc"}
+        ]
+      }
+    }
+  },
+  "status": {
+    "id": "99887766554433221100998877665544332211009988776655443322110099aa",
+    "metadata": {
+      "name": "monitoring-agent"
+    },
+    "resources": {
+      "linux": {
+        "cpusetCpus": "0-15"
+      }
+    }
+  }
+}
