@@ -17,6 +17,7 @@ CHECK_NUMA=false
 CHECK_LLC=false
 FULL_ANALYSIS=false
 OUTPUT_FORMAT="text"
+ORIGINAL_ARGS=("$@")
 
 while [[ $# -gt 0 ]]; do
   case $1 in
@@ -47,11 +48,11 @@ while [[ $# -gt 0 ]]; do
       shift
       ;;
     --output-format)
-      if [[ -n $2 && ($2 == "text" || $2 == "json") ]]; then
+      if [[ -n $2 && ($2 == "text" || $2 == "json" || $2 == "llm-summary") ]]; then
         OUTPUT_FORMAT="$2"
         shift 2
       else
-        echo "Error: --output-format requires 'text' or 'json' as argument"
+        echo "Error: --output-format requires 'text', 'json', or 'llm-summary' as argument"
         exit 1
       fi
       ;;
@@ -62,7 +63,7 @@ while [[ $# -gt 0 ]]; do
       echo "  --check-numa-alignment   Enable NUMA alignment analysis for isolated containers"
       echo "  --check-llc-alignment    Enable LLC alignment analysis for isolated containers"
       echo "  --full-analysis          Show detailed analysis for all CPUs (default: limit to top 10 most offending)"
-      echo "  --output-format FORMAT   Output format: 'text' (default) or 'json'"
+      echo "  --output-format FORMAT   Output format: 'text' (default), 'json', or 'llm-summary'"
       echo "  -h, --help               Show this help message"
       echo ""
       echo "PERFORMANCE NOTES:"
@@ -84,6 +85,34 @@ done
 if [[ ! -d "$BASE_DIR" ]]; then
   echo "Error: Directory '$BASE_DIR' does not exist"
   exit 1
+fi
+
+# Handle llm-summary: re-exec as json and post-process through llm_summarize.py
+if [[ "$OUTPUT_FORMAT" == "llm-summary" ]]; then
+  SCRIPT_DIR="$(dirname "$(readlink -f "$0")")"
+  LLM_SCRIPT="$SCRIPT_DIR/llm_summarize.py"
+  if [[ ! -f "$LLM_SCRIPT" ]]; then
+    echo "Error: LLM summarizer not found: $LLM_SCRIPT" >&2
+    exit 1
+  fi
+  # Rebuild args with json in place of llm-summary
+  REBUILT_ARGS=()
+  skip_next=false
+  for arg in "${ORIGINAL_ARGS[@]}"; do
+    if $skip_next; then
+      REBUILT_ARGS+=("json")
+      skip_next=false
+      continue
+    fi
+    if [[ "$arg" == "--output-format" ]]; then
+      REBUILT_ARGS+=("$arg")
+      skip_next=true
+      continue
+    fi
+    REBUILT_ARGS+=("$arg")
+  done
+  bash "$0" "${REBUILT_ARGS[@]}" | python3 "$LLM_SCRIPT"
+  exit $?
 fi
 
 # Function to get uptime information early
